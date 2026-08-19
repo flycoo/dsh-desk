@@ -5,7 +5,7 @@ public sealed class LogService
     private readonly object _gate = new();
     private string _logDirectory;
 
-    public LogService(string appDataDirectory)
+    public LogService(string? appDataDirectory = null)
     {
         _logDirectory = ResolveLogDirectory(appDataDirectory);
         Directory.CreateDirectory(_logDirectory);
@@ -51,9 +51,11 @@ public sealed class LogService
         }
     }
 
-    private static string ResolveLogDirectory(string appDataDirectory)
+    private static string ResolveLogDirectory(string? appDataDirectory)
     {
-        var preferred = Path.Combine(appDataDirectory, "logs");
+        var preferred = string.IsNullOrWhiteSpace(appDataDirectory)
+            ? AppPaths.LogDirectory
+            : Path.Combine(appDataDirectory, "logs");
         try
         {
             Directory.CreateDirectory(preferred);
@@ -61,10 +63,7 @@ public sealed class LogService
         }
         catch
         {
-            var fallback = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "DSHDesk",
-                "logs");
+            var fallback = AppPaths.LogDirectory;
             Directory.CreateDirectory(fallback);
             return fallback;
         }

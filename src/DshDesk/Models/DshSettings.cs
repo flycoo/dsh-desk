@@ -1,12 +1,19 @@
 namespace DshDesk.Models;
 
+public enum DshInstallationMode
+{
+    AutoDetect,
+    SpecifiedPath
+}
+
 public sealed class DshSettings
 {
-    public string DshHome { get; set; } = @"G:\DeepSeekHarness\.dsh-home";
+    public DshInstallationMode InstallationMode { get; set; } = DshInstallationMode.AutoDetect;
 
-    public string NpmCache { get; set; } = @"G:\DeepSeekHarness\.npm-cache";
+    public string DshPackageDirectory { get; set; } = string.Empty;
 
-    public string AppDataDirectory { get; set; } = @"G:\DeepSeekHarness\.dsh-desk";
+    public string WorkspaceDirectory { get; set; } =
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
     public bool CloseToTray { get; set; } = true;
 

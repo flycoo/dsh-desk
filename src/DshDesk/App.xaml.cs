@@ -41,7 +41,7 @@ public partial class App : System.Windows.Application
 
         var settingsStore = new SettingsStore();
         var settings = settingsStore.Load();
-        var log = new LogService(settings.AppDataDirectory);
+        var log = new LogService();
         _processManager = new DshProcessManager(settings, log);
 
         var window = new MainWindow(settings, settingsStore, log, _processManager);

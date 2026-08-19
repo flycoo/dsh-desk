@@ -5,7 +5,7 @@ namespace DshDesk.Services;
 
 public sealed class SettingsStore
 {
-    public const string DefaultSettingsPath = @"G:\DeepSeekHarness\.dsh-desk\settings.json";
+    public static string DefaultSettingsPath => AppPaths.SettingsPath;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

@@ -1,0 +1,32 @@
+<Window x:Class="DshDesk.ExistingDshDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="检测到现有 DSH"
+        Width="470"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        Background="{DynamicResource WindowBackground}"
+        Foreground="{DynamicResource TextPrimary}">
+  <Border Padding="24"
+          Background="{DynamicResource PanelBackground}"
+          BorderBrush="{DynamicResource AppBorderBrush}"
+          BorderThickness="1">
+    <StackPanel>
+      <TextBlock Text="127.0.0.1:3080 已有健康的 DeepSeek Harness"
+                 FontSize="17"
+                 FontWeight="SemiBold"
+                 TextWrapping="Wrap" />
+      <TextBlock Margin="0,10,0,20"
+                 Foreground="{DynamicResource TextSecondary}"
+                 Text="你可以连接现有服务，或者保留它并从指定目录启动另一份 DSH。"
+                 TextWrapping="Wrap" />
+      <WrapPanel HorizontalAlignment="Right">
+        <Button MinWidth="106" Padding="12,8" Margin="0,0,8,0" Content="连接现有服务" Click="ConnectButton_OnClick" />
+        <Button MinWidth="106" Padding="12,8" Margin="0,0,8,0" Content="启动指定版本" Click="LaunchButton_OnClick" />
+        <Button MinWidth="72" Padding="12,8" Content="取消" Click="CancelButton_OnClick" />
+      </WrapPanel>
+    </StackPanel>
+  </Border>
+</Window>

@@ -36,57 +36,50 @@ public sealed class DshProcessManager : IDisposable
 
     public string? CurrentVersion { get; private set; }
 
-    public async Task<Uri> StartOrAttachAsync(CancellationToken cancellationToken = default)
+    public DshInstallation? CurrentInstallation { get; private set; }
+
+    public Uri AttachUrl => new($"http://127.0.0.1:{_settings.AttachPort}/");
+
+    public async Task<Uri> StartOrAttachAsync(
+        bool attachExisting = true,
+        CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var startupTransitionBegan = false;
         try
         {
             SetState(DshRuntimeState.Checking, "正在检查本机 DeepSeek Harness…");
-            var existingUrl = new Uri($"http://127.0.0.1:{_settings.AttachPort}/");
-            if (await IsHealthyDshAsync(existingUrl, cancellationToken).ConfigureAwait(false))
+            var existingUrl = AttachUrl;
+            if (attachExisting &&
+                await IsHealthyDshAsync(existingUrl, cancellationToken).ConfigureAwait(false))
             {
+                startupTransitionBegan = true;
+                await StopOwnedCoreAsync().ConfigureAwait(false);
                 CurrentUrl = existingUrl;
                 CurrentVersion = null;
+                CurrentInstallation = null;
                 SetState(DshRuntimeState.Attached, $"已连接现有 DSH · {existingUrl.Authority}", existingUrl, false);
                 _log.Info($"Attached to existing DSH at {existingUrl}");
                 return existingUrl;
             }
 
-            await StopOwnedCoreAsync().ConfigureAwait(false);
-
             var nodeExecutable = DshPackageLocator.FindNodeExecutable()
                 ?? throw new InvalidOperationException("未找到 Node.js。请先安装 Node.js 并确认 node.exe 已加入 PATH。");
-            var installation = DshPackageLocator.FindDshInstallation(_settings.NpmCache)
-                ?? throw new InvalidOperationException(
-                    $"未在 {_settings.NpmCache} 找到官方 @deepseek-ai/dsh。请在设置中运行“更新/修复官方 DSH”。");
-            if (!Directory.Exists(_settings.DshHome))
-            {
-                throw new DirectoryNotFoundException($"DSH Home 不存在：{_settings.DshHome}");
-            }
+            var installation = ResolveInstallation(_settings);
+            ValidateWorkspaceDirectory(_settings.WorkspaceDirectory);
+
+            startupTransitionBegan = true;
+            await StopOwnedCoreAsync().ConfigureAwait(false);
 
             CurrentVersion = installation.Version;
-            SetState(DshRuntimeState.Starting, $"正在启动 DSH {installation.Version}…");
-            _log.Info($"Starting DSH {installation.Version} from {installation.EntryPoint}");
+            CurrentInstallation = installation;
+            var sourceText = installation.Source == DshInstallationSource.System ? "系统安装" : "指定路径";
+            SetState(DshRuntimeState.Starting, $"正在启动 DSH {installation.Version} · {sourceText}…");
+            _log.Info(
+                $"Starting DSH {installation.Version} from {installation.EntryPoint} " +
+                $"(source: {installation.Source}, package: {installation.PackageDirectory})");
 
-            var startInfo = new ProcessStartInfo(nodeExecutable)
-            {
-                WorkingDirectory = Directory.GetParent(_settings.DshHome)?.FullName ?? _settings.DshHome,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                RedirectStandardInput = false
-            };
-            startInfo.ArgumentList.Add(installation.EntryPoint);
-            startInfo.ArgumentList.Add("web");
-            startInfo.ArgumentList.Add("--host");
-            startInfo.ArgumentList.Add("127.0.0.1");
-            startInfo.ArgumentList.Add("--port");
-            startInfo.ArgumentList.Add("0");
-            startInfo.Environment["DSH_HOME"] = _settings.DshHome;
-            startInfo.Environment["npm_config_cache"] = _settings.NpmCache;
-            startInfo.Environment.Remove("SSH_CONNECTION");
-            startInfo.Environment.Remove("SSH_TTY");
+            var startInfo = CreateStartInfo(nodeExecutable, installation, _settings.WorkspaceDirectory);
 
             _readyUrl = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
             _stopping = false;
@@ -124,16 +117,24 @@ public sealed class DshProcessManager : IDisposable
             }
 
             CurrentUrl = url;
-            SetState(DshRuntimeState.Ready, $"DSH {installation.Version} 已连接 · {url.Authority}", url, true);
+            SetState(
+                DshRuntimeState.Ready,
+                $"DSH {installation.Version} · {sourceText} · {url.Authority}",
+                url,
+                true);
             _log.Info($"DSH ready at {url}");
             return url;
         }
         catch (Exception exception)
         {
             CurrentUrl = null;
+            CurrentInstallation = null;
             SetState(DshRuntimeState.Faulted, exception.Message);
             _log.Error(exception, "DSH startup failed");
-            await StopOwnedCoreAsync().ConfigureAwait(false);
+            if (startupTransitionBegan)
+            {
+                await StopOwnedCoreAsync().ConfigureAwait(false);
+            }
             throw;
         }
         finally
@@ -142,22 +143,11 @@ public sealed class DshProcessManager : IDisposable
         }
     }
 
-    public async Task<Uri> RestartAsync(CancellationToken cancellationToken = default)
+    public async Task<Uri> RestartAsync(
+        bool attachExisting = true,
+        CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            if (OwnsCurrentProcess)
-            {
-                await StopOwnedCoreAsync().ConfigureAwait(false);
-            }
-        }
-        finally
-        {
-            _gate.Release();
-        }
-
-        return await StartOrAttachAsync(cancellationToken).ConfigureAwait(false);
+        return await StartOrAttachAsync(attachExisting, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StopOwnedAsync()
@@ -200,12 +190,72 @@ public sealed class DshProcessManager : IDisposable
         }
     }
 
+    public static ProcessStartInfo CreateStartInfo(
+        string nodeExecutable,
+        DshInstallation installation,
+        string workspaceDirectory)
+    {
+        ValidateWorkspaceDirectory(workspaceDirectory);
+        var startInfo = new ProcessStartInfo(nodeExecutable)
+        {
+            WorkingDirectory = Path.GetFullPath(workspaceDirectory),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = false
+        };
+        startInfo.ArgumentList.Add(installation.EntryPoint);
+        startInfo.ArgumentList.Add("web");
+        startInfo.ArgumentList.Add("--host");
+        startInfo.ArgumentList.Add("127.0.0.1");
+        startInfo.ArgumentList.Add("--port");
+        startInfo.ArgumentList.Add("0");
+        startInfo.Environment.Remove("SSH_CONNECTION");
+        startInfo.Environment.Remove("SSH_TTY");
+        return startInfo;
+    }
+
+    public static DshInstallation ResolveInstallation(
+        DshSettings settings,
+        Func<DshInstallation?>? systemInstallationProvider = null)
+    {
+        if (settings.InstallationMode == DshInstallationMode.SpecifiedPath)
+        {
+            if (DshPackageLocator.TryValidatePackageDirectory(
+                    settings.DshPackageDirectory,
+                    DshInstallationSource.Specified,
+                    out var specified,
+                    out var error))
+            {
+                return specified!;
+            }
+
+            throw new DshInstallationNotFoundException(error);
+        }
+
+        return (systemInstallationProvider ?? (() => DshPackageLocator.FindSystemInstallation()))()
+            ?? throw new DshInstallationNotFoundException(
+                "未检测到官方 @deepseek-ai/dsh。请先执行 npm install --global @deepseek-ai/dsh，" +
+                "然后重新检测；也可以在设置中选择已有的 DSH 包目录。");
+    }
+
+    private static void ValidateWorkspaceDirectory(string workspaceDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(workspaceDirectory) || !Directory.Exists(workspaceDirectory))
+        {
+            throw new DirectoryNotFoundException($"Workspace 不存在：{workspaceDirectory}");
+        }
+    }
+
     private async Task StopOwnedCoreAsync()
     {
         var process = _ownedProcess;
         _ownedProcess = null;
         _readyUrl = null;
         CurrentUrl = null;
+        CurrentInstallation = null;
+        CurrentVersion = null;
         if (process is null)
         {
             return;
@@ -271,6 +321,8 @@ public sealed class DshProcessManager : IDisposable
         _readyUrl?.TrySetException(new InvalidOperationException(
             $"{message}{Environment.NewLine}{string.Join(Environment.NewLine, _recentOutput.TakeLast(12))}"));
         CurrentUrl = null;
+        CurrentInstallation = null;
+        CurrentVersion = null;
         SetState(DshRuntimeState.Faulted, message);
         _log.Error(message);
     }

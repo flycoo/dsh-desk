@@ -80,6 +80,40 @@
       <Setter Property="Background" Value="{DynamicResource SurfaceBackground}" />
       <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
       <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ActionRoot"
+                    Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                RecognizesAccessKey="True" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ActionRoot" Property="Background" Value="{DynamicResource AccentBrush}" />
+                <Setter TargetName="ActionRoot" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+                <Setter Property="Foreground" Value="White" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ActionRoot" Property="Background" Value="{DynamicResource AccentPressedBrush}" />
+                <Setter TargetName="ActionRoot" Property="BorderBrush" Value="{DynamicResource AccentPressedBrush}" />
+                <Setter Property="Foreground" Value="White" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="ActionRoot" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
     <Style x:Key="MenuButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
       <Setter Property="HorizontalContentAlignment" Value="Left" />
@@ -241,11 +275,13 @@
                            Margin="0,24,0,0"
                            IsIndeterminate="True"
                            Foreground="{DynamicResource AccentBrush}" />
-              <StackPanel x:Name="ErrorActions" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,24,0,0">
-                <Button Style="{StaticResource ActionButton}" Content="重试" Click="RetryButton_OnClick" />
+              <WrapPanel x:Name="ErrorActions" Visibility="Collapsed" HorizontalAlignment="Center" Margin="0,24,0,0">
+                <Button x:Name="RetryButton" Style="{StaticResource ActionButton}" Content="重试" Click="RetryButton_OnClick" />
+                <Button x:Name="ChooseInstallationButton" Style="{StaticResource ActionButton}" Content="选择安装目录" Click="ChooseInstallationButton_OnClick" />
+                <Button x:Name="CopyInstallCommandButton" Style="{StaticResource ActionButton}" Content="复制安装命令" Click="CopyInstallCommandButton_OnClick" />
                 <Button Style="{StaticResource ActionButton}" Content="查看日志" Click="OpenLogsButton_OnClick" />
                 <Button Style="{StaticResource ActionButton}" Content="退出" Click="ExitButton_OnClick" />
-              </StackPanel>
+              </WrapPanel>
             </StackPanel>
           </Border>
         </Grid>
@@ -276,31 +312,76 @@
              Grid.Row="0"
              PlacementTarget="{Binding ElementName=CloseButton}"
              Placement="Bottom"
-             HorizontalOffset="-272"
+             HorizontalOffset="-422"
              VerticalOffset="6"
              StaysOpen="False"
              PopupAnimation="Fade"
              AllowsTransparency="True">
-        <Border Width="310" Padding="16" Background="{DynamicResource PanelBackground}" TextElement.Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="9">
-          <StackPanel>
-            <TextBlock Text="DSH Desk 设置" FontSize="15" FontWeight="SemiBold" Margin="4,0,0,12" />
-            <StackPanel Orientation="Horizontal" Margin="6,8,6,10">
-              <CheckBox x:Name="CloseToTrayCheckBox"
-                        VerticalAlignment="Center"
-                        Margin="0,0,8,0"
-                        Checked="CloseToTrayCheckBox_OnChanged"
-                        Unchecked="CloseToTrayCheckBox_OnChanged" />
-              <TextBlock Text="关闭窗口时缩到系统托盘"
-                         VerticalAlignment="Center"
-                         FontSize="14"
-                         Foreground="{DynamicResource TextPrimary}" />
+        <Border Width="460" Padding="18" Background="{DynamicResource PanelBackground}" TextElement.Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="9">
+          <ScrollViewer MaxHeight="680" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+              <TextBlock Text="DSH Desk 设置" FontSize="16" FontWeight="SemiBold" Margin="4,0,0,14" />
+
+              <TextBlock Text="DSH 安装来源" FontWeight="SemiBold" Margin="4,0,0,8" />
+              <RadioButton x:Name="AutoDetectRadioButton"
+                           Content="自动检测系统 DSH"
+                           Foreground="{DynamicResource TextPrimary}"
+                           Margin="6,4,6,6"
+                           Checked="InstallationModeRadioButton_OnChanged" />
+              <Border Margin="24,0,4,10" Padding="10" Background="{DynamicResource SurfaceBackground}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="5">
+                <TextBlock x:Name="DetectedInstallationText"
+                           Text="打开设置后自动检测"
+                           Foreground="{DynamicResource TextSecondary}"
+                           TextWrapping="Wrap" />
+              </Border>
+
+              <RadioButton x:Name="SpecifiedPathRadioButton"
+                           Content="使用指定安装"
+                           Foreground="{DynamicResource TextPrimary}"
+                           Margin="6,4,6,6"
+                           Checked="InstallationModeRadioButton_OnChanged" />
+              <StackPanel x:Name="SpecifiedInstallationPanel" Margin="24,0,4,12">
+                <Border Padding="10" Background="{DynamicResource SurfaceBackground}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="5">
+                  <TextBlock x:Name="SpecifiedInstallationPathText"
+                             Text="尚未选择 @deepseek-ai/dsh 包目录"
+                             Foreground="{DynamicResource TextSecondary}"
+                             TextWrapping="Wrap" />
+                </Border>
+                <Button Style="{StaticResource MenuButton}" Content="选择 DSH 包目录…" Click="SelectDshPackageButton_OnClick" />
+              </StackPanel>
+
+              <TextBlock Text="Workspace" FontWeight="SemiBold" Margin="4,2,0,8" />
+              <Border Margin="4,0,4,0" Padding="10" Background="{DynamicResource SurfaceBackground}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="5">
+                <TextBlock x:Name="WorkspacePathText"
+                           Foreground="{DynamicResource TextSecondary}"
+                           TextWrapping="Wrap" />
+              </Border>
+              <Button Style="{StaticResource MenuButton}" Content="选择 Workspace…" Click="SelectWorkspaceButton_OnClick" />
+
+              <Button Style="{StaticResource ActionButton}"
+                      Margin="4,10,4,8"
+                      HorizontalContentAlignment="Center"
+                      Content="保存并重新连接"
+                      Click="SaveAndReconnectButton_OnClick" />
+
+              <Separator Margin="0,6" Background="{DynamicResource AppBorderBrush}" />
+              <StackPanel Orientation="Horizontal" Margin="6,8,6,10">
+                <CheckBox x:Name="CloseToTrayCheckBox"
+                          VerticalAlignment="Center"
+                          Margin="0,0,8,0"
+                          Checked="CloseToTrayCheckBox_OnChanged"
+                          Unchecked="CloseToTrayCheckBox_OnChanged" />
+                <TextBlock Text="关闭窗口时缩到系统托盘"
+                           VerticalAlignment="Center"
+                           FontSize="14"
+                           Foreground="{DynamicResource TextPrimary}" />
+              </StackPanel>
+              <Button Style="{StaticResource MenuButton}" Content="打开数据目录" Click="OpenDataButton_OnClick" />
+              <Button Style="{StaticResource MenuButton}" Content="打开日志目录" Click="OpenLogsButton_OnClick" />
+              <Separator Margin="0,8" Background="{DynamicResource AppBorderBrush}" />
+              <Button Style="{StaticResource MenuButton}" Content="彻底退出 DSH Desk" Click="ExitButton_OnClick" />
             </StackPanel>
-            <Button Style="{StaticResource MenuButton}" Content="打开数据目录" Click="OpenDataButton_OnClick" />
-            <Button Style="{StaticResource MenuButton}" Content="打开日志目录" Click="OpenLogsButton_OnClick" />
-            <Button Style="{StaticResource MenuButton}" Content="更新 / 修复官方 DSH" Click="UpdateDshButton_OnClick" />
-            <Separator Margin="0,8" Background="{DynamicResource AppBorderBrush}" />
-            <Button Style="{StaticResource MenuButton}" Content="彻底退出 DSH Desk" Click="ExitButton_OnClick" />
-          </StackPanel>
+          </ScrollViewer>
         </Border>
       </Popup>
 
