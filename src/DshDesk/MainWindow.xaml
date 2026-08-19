@@ -16,7 +16,7 @@
         Foreground="{DynamicResource TextPrimary}">
   <shell:WindowChrome.WindowChrome>
     <shell:WindowChrome CaptionHeight="0"
-                        ResizeBorderThickness="12,6,12,10"
+                        ResizeBorderThickness="6"
                         GlassFrameThickness="0"
                         CornerRadius="0"
                         UseAeroCaptionButtons="False" />
@@ -160,7 +160,7 @@
       </Grid>
 
       <Border DockPanel.Dock="Bottom"
-              Height="12"
+              Height="6"
               Background="{DynamicResource ChromeBackground}"
               Cursor="SizeNS"
               shell:WindowChrome.ResizeGripDirection="Bottom">
@@ -177,10 +177,27 @@
       </Border>
 
       <Border DockPanel.Dock="Right"
-              Width="12"
+              Width="6"
               Background="{DynamicResource ChromeBackground}"
               Cursor="SizeWE"
               shell:WindowChrome.ResizeGripDirection="Right">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Visibility" Value="Visible" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="Maximized">
+                <Setter Property="Visibility" Value="Collapsed" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+      </Border>
+
+      <Border DockPanel.Dock="Left"
+              Width="6"
+              Background="{DynamicResource ChromeBackground}"
+              Cursor="SizeWE"
+              shell:WindowChrome.ResizeGripDirection="Left">
         <Border.Style>
           <Style TargetType="Border">
             <Setter Property="Visibility" Value="Visible" />
