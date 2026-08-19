@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/DshDesk/DshDesk.csproj" />
+  <Project Path="tests/DshDesk.Tests/DshDesk.Tests.csproj" />
+</Solution>

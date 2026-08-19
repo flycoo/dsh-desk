@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+artifacts/
+.nuget/
+.local-packages/
+.build-appdata/
+work/
+*.user
+*.suo
+TestResults/

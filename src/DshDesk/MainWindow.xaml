@@ -1,0 +1,292 @@
+<Window x:Class="DshDesk.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="DSH Desk"
+        Width="1280"
+        Height="820"
+        MinWidth="820"
+        MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Icon="Assets/app-icon.ico"
+        Background="{DynamicResource WindowBackground}"
+        Foreground="{DynamicResource TextPrimary}">
+  <shell:WindowChrome.WindowChrome>
+    <shell:WindowChrome CaptionHeight="0"
+                        ResizeBorderThickness="12,6,12,10"
+                        GlassFrameThickness="0"
+                        CornerRadius="0"
+                        UseAeroCaptionButtons="False" />
+  </shell:WindowChrome.WindowChrome>
+  <Window.Resources>
+    <Style x:Key="TitleButton" TargetType="Button">
+      <Setter Property="Width" Value="46" />
+      <Setter Property="Height" Value="42" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Root" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Root" Property="Background" Value="{DynamicResource SurfaceBackground}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="StatusButtonStyle" TargetType="Button">
+      <Setter Property="Height" Value="42" />
+      <Setter Property="Padding" Value="12,0" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="StatusRoot"
+                    Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="StatusRoot" Property="Background" Value="{DynamicResource SurfaceBackground}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="StatusRoot" Property="Background" Value="{DynamicResource PanelBackground}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="ActionButton" TargetType="Button">
+      <Setter Property="Padding" Value="16,9" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceBackground}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style x:Key="MenuButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="Margin" Value="0,2,0,0" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="MenuItemRoot"
+                    Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}"
+                    CornerRadius="6">
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="MenuItemRoot" Property="Background" Value="{DynamicResource SurfaceBackground}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="MenuItemRoot" Property="Background" Value="{DynamicResource AccentBrush}" />
+                <Setter Property="Foreground" Value="White" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+
+  <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1">
+    <Grid>
+      <DockPanel LastChildFill="True">
+
+      <Grid x:Name="TitleBar"
+            DockPanel.Dock="Top"
+            Height="42"
+            Background="{DynamicResource ChromeBackground}"
+            MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
+          <Image Width="25" Height="25" Source="Assets/app-icon.png" RenderOptions.BitmapScalingMode="HighQuality" />
+          <TextBlock Text="DSH Desk" Margin="9,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <Button x:Name="StatusButton"
+                  Style="{StaticResource StatusButtonStyle}"
+                  Click="StatusButton_OnClick">
+            <StackPanel Orientation="Horizontal">
+              <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="{DynamicResource AccentBrush}" Margin="0,0,8,0" />
+              <TextBlock x:Name="StatusText" Text="正在启动" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource TitleButton}" ToolTip="DSH Desk 设置" Click="SettingsButton_OnClick">
+            <TextBlock Text="⚙" FontSize="16" />
+          </Button>
+          <Button Style="{StaticResource TitleButton}" ToolTip="最小化" Click="MinimizeButton_OnClick">
+            <TextBlock Text="─" />
+          </Button>
+          <Button Style="{StaticResource TitleButton}" ToolTip="最大化" Click="MaximizeButton_OnClick">
+            <TextBlock Text="□" FontSize="15" />
+          </Button>
+          <Button x:Name="CloseButton" Style="{StaticResource TitleButton}" ToolTip="关闭到托盘" Click="CloseButton_OnClick">
+            <TextBlock Text="✕" />
+          </Button>
+        </StackPanel>
+      </Grid>
+
+      <Border DockPanel.Dock="Bottom"
+              Height="12"
+              Background="{DynamicResource ChromeBackground}"
+              Cursor="SizeNS"
+              shell:WindowChrome.ResizeGripDirection="Bottom">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Visibility" Value="Visible" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="Maximized">
+                <Setter Property="Visibility" Value="Collapsed" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+      </Border>
+
+      <Border DockPanel.Dock="Right"
+              Width="12"
+              Background="{DynamicResource ChromeBackground}"
+              Cursor="SizeWE"
+              shell:WindowChrome.ResizeGripDirection="Right">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Setter Property="Visibility" Value="Visible" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="Maximized">
+                <Setter Property="Visibility" Value="Collapsed" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+      </Border>
+
+      <Grid Background="{DynamicResource WindowBackground}">
+        <wv2:WebView2 x:Name="HarnessWebView" Visibility="Hidden" />
+
+        <Grid x:Name="LaunchOverlay" Background="{DynamicResource WindowBackground}">
+          <Border Width="520"
+                  MaxWidth="520"
+                  Padding="34"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  Background="{DynamicResource PanelBackground}"
+                  BorderBrush="{DynamicResource AppBorderBrush}"
+                  BorderThickness="1"
+                  CornerRadius="14">
+            <StackPanel>
+              <Image Width="64" Height="64" Source="Assets/app-icon.png" RenderOptions.BitmapScalingMode="HighQuality" HorizontalAlignment="Center" />
+              <TextBlock x:Name="StartupTitle"
+                         Text="正在启动 DeepSeek Harness"
+                         Margin="0,20,0,7"
+                         FontSize="20"
+                         FontWeight="SemiBold"
+                         TextAlignment="Center" />
+              <TextBlock x:Name="StartupDetail"
+                         Text="正在检查本机环境…"
+                         Foreground="{DynamicResource TextSecondary}"
+                         TextAlignment="Center"
+                         TextWrapping="Wrap" />
+              <ProgressBar x:Name="StartupProgress"
+                           Height="4"
+                           Margin="0,24,0,0"
+                           IsIndeterminate="True"
+                           Foreground="{DynamicResource AccentBrush}" />
+              <StackPanel x:Name="ErrorActions" Visibility="Collapsed" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,24,0,0">
+                <Button Style="{StaticResource ActionButton}" Content="重试" Click="RetryButton_OnClick" />
+                <Button Style="{StaticResource ActionButton}" Content="查看日志" Click="OpenLogsButton_OnClick" />
+                <Button Style="{StaticResource ActionButton}" Content="退出" Click="ExitButton_OnClick" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </Grid>
+      </Grid>
+      </DockPanel>
+
+      <Popup x:Name="StatusPopup"
+             Grid.Row="0"
+             PlacementTarget="{Binding ElementName=StatusButton}"
+             Placement="Bottom"
+             VerticalOffset="6"
+             StaysOpen="False"
+             PopupAnimation="Fade"
+             AllowsTransparency="True">
+        <Border Width="300" Padding="16" Background="{DynamicResource PanelBackground}" TextElement.Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="9">
+          <StackPanel>
+            <TextBlock Text="本机服务状态" FontSize="15" FontWeight="SemiBold" Margin="4,0,0,10" />
+            <TextBlock x:Name="PopupStatusText" Text="正在检查" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
+            <TextBlock x:Name="PopupAddressText" Margin="0,7,0,0" Foreground="{DynamicResource TextSecondary}" />
+            <TextBlock x:Name="PopupVersionText" Margin="0,4,0,10" Foreground="{DynamicResource TextSecondary}" />
+            <Button Style="{StaticResource MenuButton}" Content="重新连接 / 重启 DSH" Click="RestartButton_OnClick" />
+            <Button Style="{StaticResource MenuButton}" Content="查看启动日志" Click="OpenLogsButton_OnClick" />
+          </StackPanel>
+        </Border>
+      </Popup>
+
+      <Popup x:Name="SettingsPopup"
+             Grid.Row="0"
+             PlacementTarget="{Binding ElementName=CloseButton}"
+             Placement="Bottom"
+             HorizontalOffset="-272"
+             VerticalOffset="6"
+             StaysOpen="False"
+             PopupAnimation="Fade"
+             AllowsTransparency="True">
+        <Border Width="310" Padding="16" Background="{DynamicResource PanelBackground}" TextElement.Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="9">
+          <StackPanel>
+            <TextBlock Text="DSH Desk 设置" FontSize="15" FontWeight="SemiBold" Margin="4,0,0,12" />
+            <StackPanel Orientation="Horizontal" Margin="6,8,6,10">
+              <CheckBox x:Name="CloseToTrayCheckBox"
+                        VerticalAlignment="Center"
+                        Margin="0,0,8,0"
+                        Checked="CloseToTrayCheckBox_OnChanged"
+                        Unchecked="CloseToTrayCheckBox_OnChanged" />
+              <TextBlock Text="关闭窗口时缩到系统托盘"
+                         VerticalAlignment="Center"
+                         FontSize="14"
+                         Foreground="{DynamicResource TextPrimary}" />
+            </StackPanel>
+            <Button Style="{StaticResource MenuButton}" Content="打开数据目录" Click="OpenDataButton_OnClick" />
+            <Button Style="{StaticResource MenuButton}" Content="打开日志目录" Click="OpenLogsButton_OnClick" />
+            <Button Style="{StaticResource MenuButton}" Content="更新 / 修复官方 DSH" Click="UpdateDshButton_OnClick" />
+            <Separator Margin="0,8" Background="{DynamicResource AppBorderBrush}" />
+            <Button Style="{StaticResource MenuButton}" Content="彻底退出 DSH Desk" Click="ExitButton_OnClick" />
+          </StackPanel>
+        </Border>
+      </Popup>
+
+    </Grid>
+  </Border>
+</Window>
