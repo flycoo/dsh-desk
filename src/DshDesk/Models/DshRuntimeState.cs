@@ -16,7 +16,21 @@ public sealed record DshStateChangedEventArgs(
     Uri? Url = null,
     bool IsOwned = false);
 
+public enum DshInstallationSource
+{
+    System,
+    Specified
+}
+
+public enum ExistingDshChoice
+{
+    ConnectExisting,
+    LaunchSpecified,
+    Cancel
+}
+
 public sealed record DshInstallation(
+    DshInstallationSource Source,
     string Version,
     string PackageDirectory,
     string EntryPoint);

@@ -12,6 +12,8 @@ namespace DshDesk;
 
 public partial class MainWindow : Window
 {
+    private const string InstallCommand = "npm install --global @deepseek-ai/dsh";
+
     private const string DshThemeBridgeScript = """
         (() => {
           if (window.__dshDeskThemeBridgeInstalled) return;
@@ -95,7 +97,6 @@ public partial class MainWindow : Window
     private readonly SettingsStore _settingsStore;
     private readonly LogService _log;
     private readonly DshProcessManager _processManager;
-    private readonly DshUpdater _updater;
     private readonly Forms.NotifyIcon _trayIcon;
     private Uri? _allowedOrigin;
     private bool _webViewInitialized;
@@ -103,6 +104,8 @@ public partial class MainWindow : Window
     private bool _trayHintShown;
     private bool _settingsInitialized;
     private bool _hasPageTheme;
+    private string _draftDshPackageDirectory = string.Empty;
+    private string _draftWorkspaceDirectory = string.Empty;
 
     public MainWindow(
         DshSettings settings,
@@ -114,7 +117,6 @@ public partial class MainWindow : Window
         _settingsStore = settingsStore;
         _log = log;
         _processManager = processManager;
-        _updater = new DshUpdater(settings, log);
 
         InitializeComponent();
         CloseToTrayCheckBox.IsChecked = settings.CloseToTray;
@@ -146,22 +148,43 @@ public partial class MainWindow : Window
         Focus();
     }
 
-    private async Task StartDshAsync(bool restart = false)
+    private async Task StartDshAsync(bool restart = false, bool? attachExistingOverride = null)
     {
+        var attachExisting = attachExistingOverride ?? true;
+        if (attachExistingOverride is null && _settings.InstallationMode == DshInstallationMode.SpecifiedPath)
+        {
+            var existingHealthy = await _processManager.IsHealthyDshAsync(_processManager.AttachUrl);
+            var choice = existingHealthy ? ShowExistingDshDialog() : ExistingDshChoice.LaunchSpecified;
+            var decision = DshLaunchPolicy.Decide(_settings.InstallationMode, existingHealthy, choice);
+            if (!decision.ApplyChanges)
+            {
+                return;
+            }
+
+            attachExisting = decision.AttachExisting;
+        }
+
         ShowStarting("正在启动 DeepSeek Harness", restart ? "正在重新连接本机服务…" : "正在检查本机环境…");
         try
         {
             EnsureWebViewRuntimeAvailable();
             var url = restart
-                ? await _processManager.RestartAsync()
-                : await _processManager.StartOrAttachAsync();
+                ? await _processManager.RestartAsync(attachExisting)
+                : await _processManager.StartOrAttachAsync(attachExisting);
             await NavigateToDshAsync(url);
         }
         catch (Exception exception)
         {
             _log.Error(exception, "Unable to start DSH Desk");
-            ShowFailure(exception.Message);
+            ShowFailure(exception);
         }
+    }
+
+    private ExistingDshChoice ShowExistingDshDialog()
+    {
+        var dialog = new ExistingDshDialog { Owner = this };
+        dialog.ShowDialog();
+        return dialog.Choice;
     }
 
     private static void EnsureWebViewRuntimeAvailable()
@@ -225,21 +248,8 @@ public partial class MainWindow : Window
 
     private string ResolveWebViewDataDirectory()
     {
-        var preferred = Path.Combine(_settings.AppDataDirectory, "webview2");
-        try
-        {
-            Directory.CreateDirectory(preferred);
-            return preferred;
-        }
-        catch
-        {
-            var fallback = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "DSHDesk",
-                "webview2");
-            Directory.CreateDirectory(fallback);
-            return fallback;
-        }
+        Directory.CreateDirectory(AppPaths.WebViewDataDirectory);
+        return AppPaths.WebViewDataDirectory;
     }
 
     private void CoreWebView2_OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
@@ -302,6 +312,9 @@ public partial class MainWindow : Window
         {
             StatusText.Text = e.State switch
             {
+                DshRuntimeState.Ready when _processManager.CurrentInstallation is { } installation =>
+                    $"DSH {installation.Version} · " +
+                    (installation.Source == DshInstallationSource.System ? "系统安装" : "指定路径"),
                 DshRuntimeState.Ready => "DSH 已连接",
                 DshRuntimeState.Attached => "已连接现有 DSH",
                 DshRuntimeState.Faulted => "DSH 启动失败",
@@ -317,9 +330,13 @@ public partial class MainWindow : Window
             };
             PopupStatusText.Text = e.Message;
             PopupAddressText.Text = e.Url is null ? string.Empty : $"地址：{e.Url.Authority}";
-            PopupVersionText.Text = string.IsNullOrWhiteSpace(_processManager.CurrentVersion)
-                ? (e.State == DshRuntimeState.Attached ? "来源：外部进程" : string.Empty)
-                : $"版本：{_processManager.CurrentVersion} · {(e.IsOwned ? "DSH Desk 管理" : "外部进程")}";
+            var currentInstallation = _processManager.CurrentInstallation;
+            PopupVersionText.Text = currentInstallation is not null
+                ? $"版本：{currentInstallation.Version} · " +
+                  (currentInstallation.Source == DshInstallationSource.System ? "系统安装" : "指定路径")
+                : e.State == DshRuntimeState.Attached
+                    ? "来源：外部服务"
+                    : string.Empty;
             _trayIcon.Text = StatusText.Text.Length <= 63 ? $"DSH Desk - {StatusText.Text}" : "DSH Desk";
 
             if (e.State is DshRuntimeState.Checking or DshRuntimeState.Starting)
@@ -341,11 +358,26 @@ public partial class MainWindow : Window
 
     private void ShowFailure(string message)
     {
+        ShowFailureCore(message, false);
+    }
+
+    private void ShowFailure(Exception exception)
+    {
+        ShowFailureCore(exception.Message, exception is DshInstallationNotFoundException);
+    }
+
+    private void ShowFailureCore(string message, bool installationMissing)
+    {
         HarnessWebView.Visibility = Visibility.Hidden;
         LaunchOverlay.Visibility = Visibility.Visible;
-        StartupTitle.Text = "DSH Desk 无法启动";
-        StartupDetail.Text = message;
+        StartupTitle.Text = installationMissing ? "未找到可用的 DSH" : "DSH Desk 无法启动";
+        StartupDetail.Text = installationMissing
+            ? $"{message}{Environment.NewLine}{Environment.NewLine}安装命令：{InstallCommand}"
+            : message;
         StartupProgress.Visibility = Visibility.Collapsed;
+        RetryButton.Content = installationMissing ? "重新检测" : "重试";
+        ChooseInstallationButton.Visibility = installationMissing ? Visibility.Visible : Visibility.Collapsed;
+        CopyInstallCommandButton.Visibility = installationMissing ? Visibility.Visible : Visibility.Collapsed;
         ErrorActions.Visibility = Visibility.Visible;
     }
 
@@ -429,7 +461,18 @@ public partial class MainWindow : Window
 
     private void StatusButton_OnClick(object sender, RoutedEventArgs e) => StatusPopup.IsOpen = !StatusPopup.IsOpen;
 
-    private void SettingsButton_OnClick(object sender, RoutedEventArgs e) => SettingsPopup.IsOpen = !SettingsPopup.IsOpen;
+    private async void SettingsButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (SettingsPopup.IsOpen)
+        {
+            SettingsPopup.IsOpen = false;
+            return;
+        }
+
+        LoadSettingsDraft();
+        SettingsPopup.IsOpen = true;
+        await RefreshDetectedInstallationAsync();
+    }
 
     private void MinimizeButton_OnClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
 
@@ -457,35 +500,212 @@ public partial class MainWindow : Window
 
     private void OpenDataButton_OnClick(object sender, RoutedEventArgs e)
     {
-        Directory.CreateDirectory(_settings.AppDataDirectory);
-        Process.Start(new ProcessStartInfo("explorer.exe", _settings.AppDataDirectory) { UseShellExecute = true });
+        Directory.CreateDirectory(AppPaths.DataDirectory);
+        Process.Start(new ProcessStartInfo("explorer.exe", AppPaths.DataDirectory) { UseShellExecute = true });
     }
 
-    private async void UpdateDshButton_OnClick(object sender, RoutedEventArgs e)
+    private void InstallationModeRadioButton_OnChanged(object sender, RoutedEventArgs e)
     {
-        SettingsPopup.IsOpen = false;
-        var result = System.Windows.MessageBox.Show(
-            "将通过官方 npm 包 @deepseek-ai/dsh@latest 更新本机缓存。继续吗？",
-            "更新官方 DSH",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-        if (result != MessageBoxResult.Yes)
+        if (!_settingsInitialized)
         {
             return;
         }
 
-        ShowStarting("正在更新官方 DSH", "正在访问 npm 官方包源，请稍候…");
+        SpecifiedInstallationPanel.IsEnabled = SpecifiedPathRadioButton.IsChecked == true;
+    }
+
+    private void SelectDshPackageButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        SettingsPopup.IsOpen = false;
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            Description = "请选择包含 package.json 的 @deepseek-ai/dsh 包目录",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false,
+            SelectedPath = Directory.Exists(_draftDshPackageDirectory)
+                ? _draftDshPackageDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
+        };
+        if (dialog.ShowDialog() != Forms.DialogResult.OK)
+        {
+            SettingsPopup.IsOpen = true;
+            return;
+        }
+
+        if (!DshPackageLocator.TryValidatePackageDirectory(
+                dialog.SelectedPath,
+                DshInstallationSource.Specified,
+                out var installation,
+                out var error))
+        {
+            System.Windows.MessageBox.Show(
+                error,
+                "无效的 DSH 安装目录",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            SettingsPopup.IsOpen = true;
+            return;
+        }
+
+        _draftDshPackageDirectory = installation!.PackageDirectory;
+        SpecifiedInstallationPathText.Text =
+            $"版本：{installation.Version}{Environment.NewLine}{installation.PackageDirectory}";
+        SettingsPopup.IsOpen = true;
+    }
+
+    private void SelectWorkspaceButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        SettingsPopup.IsOpen = false;
+        using var dialog = new Forms.FolderBrowserDialog
+        {
+            Description = "请选择 DSH Web 使用的默认 Workspace",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = false,
+            SelectedPath = Directory.Exists(_draftWorkspaceDirectory)
+                ? _draftWorkspaceDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+        };
+        if (dialog.ShowDialog() != Forms.DialogResult.OK)
+        {
+            SettingsPopup.IsOpen = true;
+            return;
+        }
+
+        _draftWorkspaceDirectory = Path.GetFullPath(dialog.SelectedPath);
+        WorkspacePathText.Text = _draftWorkspaceDirectory;
+        SettingsPopup.IsOpen = true;
+    }
+
+    private async void SaveAndReconnectButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var workspaceDirectory = _draftWorkspaceDirectory.Trim();
+        if (string.IsNullOrWhiteSpace(workspaceDirectory) || !Directory.Exists(workspaceDirectory))
+        {
+            System.Windows.MessageBox.Show(
+                $"Workspace 不存在：{workspaceDirectory}",
+                "无法保存设置",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            SettingsPopup.IsOpen = true;
+            return;
+        }
+
+        var mode = SpecifiedPathRadioButton.IsChecked == true
+            ? DshInstallationMode.SpecifiedPath
+            : DshInstallationMode.AutoDetect;
+        if (mode == DshInstallationMode.SpecifiedPath &&
+            !DshPackageLocator.TryValidatePackageDirectory(
+                _draftDshPackageDirectory,
+                DshInstallationSource.Specified,
+                out _,
+                out var packageError))
+        {
+            System.Windows.MessageBox.Show(
+                packageError,
+                "无法保存设置",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            SettingsPopup.IsOpen = true;
+            return;
+        }
+
+        bool? attachExistingOverride = null;
+        if (mode == DshInstallationMode.SpecifiedPath)
+        {
+            var existingHealthy = await _processManager.IsHealthyDshAsync(_processManager.AttachUrl);
+            SettingsPopup.IsOpen = false;
+            var choice = existingHealthy ? ShowExistingDshDialog() : ExistingDshChoice.LaunchSpecified;
+            var decision = DshLaunchPolicy.Decide(mode, existingHealthy, choice);
+            if (!decision.ApplyChanges)
+            {
+                SettingsPopup.IsOpen = true;
+                return;
+            }
+
+            attachExistingOverride = decision.AttachExisting;
+        }
+
+        var updatedSettings = new DshSettings
+        {
+            InstallationMode = mode,
+            DshPackageDirectory = _draftDshPackageDirectory,
+            WorkspaceDirectory = Path.GetFullPath(workspaceDirectory),
+            CloseToTray = _settings.CloseToTray,
+            AttachPort = _settings.AttachPort,
+            StartupTimeoutSeconds = _settings.StartupTimeoutSeconds
+        };
         try
         {
-            var version = await _updater.UpdateOfficialPackageAsync();
-            _log.Info($"Update completed: {version}");
-            await StartDshAsync(true);
+            _settingsStore.Save(updatedSettings);
         }
         catch (Exception exception)
         {
-            _log.Error(exception, "Official DSH update failed");
-            ShowFailure(exception.Message);
+            _log.Error(exception, "Unable to save DSH launch settings");
+            System.Windows.MessageBox.Show(
+                exception.Message,
+                "无法保存设置",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            SettingsPopup.IsOpen = true;
+            return;
         }
+
+        _settings.InstallationMode = updatedSettings.InstallationMode;
+        _settings.DshPackageDirectory = updatedSettings.DshPackageDirectory;
+        _settings.WorkspaceDirectory = updatedSettings.WorkspaceDirectory;
+        SettingsPopup.IsOpen = false;
+        await StartDshAsync(true, attachExistingOverride);
+    }
+
+    private async void ChooseInstallationButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        LoadSettingsDraft(forceSpecifiedPath: true);
+        SettingsPopup.IsOpen = true;
+        await RefreshDetectedInstallationAsync();
+    }
+
+    private void CopyInstallCommandButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            System.Windows.Clipboard.SetText(InstallCommand);
+            StartupDetail.Text = $"安装命令已复制：{InstallCommand}";
+        }
+        catch (Exception exception)
+        {
+            _log.Error(exception, "Unable to copy DSH install command");
+            System.Windows.MessageBox.Show(
+                InstallCommand,
+                "请手动复制安装命令",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+    }
+
+    private void LoadSettingsDraft(bool forceSpecifiedPath = false)
+    {
+        _draftDshPackageDirectory = _settings.DshPackageDirectory;
+        _draftWorkspaceDirectory = string.IsNullOrWhiteSpace(_settings.WorkspaceDirectory)
+            ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            : _settings.WorkspaceDirectory;
+
+        var specified = forceSpecifiedPath || _settings.InstallationMode == DshInstallationMode.SpecifiedPath;
+        AutoDetectRadioButton.IsChecked = !specified;
+        SpecifiedPathRadioButton.IsChecked = specified;
+        SpecifiedInstallationPanel.IsEnabled = specified;
+        SpecifiedInstallationPathText.Text = string.IsNullOrWhiteSpace(_draftDshPackageDirectory)
+            ? "尚未选择 @deepseek-ai/dsh 包目录"
+            : _draftDshPackageDirectory;
+        WorkspacePathText.Text = _draftWorkspaceDirectory;
+    }
+
+    private async Task RefreshDetectedInstallationAsync()
+    {
+        DetectedInstallationText.Text = "正在检测系统 DSH…";
+        var installation = await Task.Run(() => DshPackageLocator.FindSystemInstallation());
+        DetectedInstallationText.Text = installation is null
+            ? $"未检测到系统安装。可先执行：{InstallCommand}"
+            : $"版本：{installation.Version}{Environment.NewLine}{installation.PackageDirectory}";
     }
 
     private void CloseToTrayCheckBox_OnChanged(object sender, RoutedEventArgs e)

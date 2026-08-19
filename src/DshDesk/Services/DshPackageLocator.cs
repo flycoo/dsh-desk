@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using DshDesk.Models;
 
@@ -5,62 +6,167 @@ namespace DshDesk.Services;
 
 public static class DshPackageLocator
 {
-    public static DshInstallation? FindDshInstallation(string npmCache)
-    {
-        var npxRoot = Path.Combine(npmCache, "_npx");
-        if (!Directory.Exists(npxRoot))
-        {
-            return null;
-        }
+    private const string PackageName = "@deepseek-ai/dsh";
 
-        var installations = new List<DshInstallation>();
-        foreach (var cacheDirectory in Directory.EnumerateDirectories(npxRoot))
+    public static DshInstallation? FindSystemInstallation(
+        IEnumerable<string>? pathEntries = null,
+        string? applicationData = null,
+        Func<string?>? npmGlobalRootProvider = null)
+    {
+        var paths = (pathEntries ?? GetPathEntries())
+            .Select(NormalizeDirectory)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in paths)
         {
-            var packageDirectory = Path.Combine(
-                cacheDirectory,
-                "node_modules",
-                "@deepseek-ai",
-                "dsh");
-            var packageJsonPath = Path.Combine(packageDirectory, "package.json");
-            if (!File.Exists(packageJsonPath))
+            if (!HasDshShim(path))
             {
                 continue;
             }
 
-            try
+            var packageDirectory = Path.Combine(path, "node_modules", "@deepseek-ai", "dsh");
+            var installation = TryCandidate(packageDirectory, visited);
+            if (installation is not null)
             {
-                using var document = JsonDocument.Parse(File.ReadAllText(packageJsonPath));
-                var root = document.RootElement;
-                var version = root.GetProperty("version").GetString();
-                var entry = ReadBinEntry(root);
-                if (string.IsNullOrWhiteSpace(version) || string.IsNullOrWhiteSpace(entry))
-                {
-                    continue;
-                }
-
-                var entryPoint = Path.GetFullPath(Path.Combine(packageDirectory, entry));
-                if (File.Exists(entryPoint))
-                {
-                    installations.Add(new DshInstallation(version, packageDirectory, entryPoint));
-                }
-            }
-            catch (JsonException)
-            {
-                // Ignore incomplete or damaged cache entries and continue scanning.
+                return installation;
             }
         }
 
-        return installations
-            .OrderByDescending(item => item.Version, SemanticVersionComparer.Instance)
-            .FirstOrDefault();
+        var roamingAppData = applicationData ??
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        if (!string.IsNullOrWhiteSpace(roamingAppData))
+        {
+            var standardPackageDirectory = Path.Combine(
+                roamingAppData,
+                "npm",
+                "node_modules",
+                "@deepseek-ai",
+                "dsh");
+            var installation = TryCandidate(standardPackageDirectory, visited);
+            if (installation is not null)
+            {
+                return installation;
+            }
+        }
+
+        var globalRoot = (npmGlobalRootProvider ?? (() => TryGetNpmGlobalRoot(paths)))();
+        if (!string.IsNullOrWhiteSpace(globalRoot))
+        {
+            return TryCandidate(
+                Path.Combine(globalRoot.Trim(), "@deepseek-ai", "dsh"),
+                visited);
+        }
+
+        return null;
     }
 
-    public static string? FindNodeExecutable()
+    public static bool TryValidatePackageDirectory(
+        string? packageDirectory,
+        DshInstallationSource source,
+        out DshInstallation? installation,
+        out string error)
+    {
+        installation = null;
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(packageDirectory))
+        {
+            error = "尚未选择 DSH 安装目录。";
+            return false;
+        }
+
+        string normalizedDirectory;
+        try
+        {
+            normalizedDirectory = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(packageDirectory.Trim().Trim('"')));
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            error = $"DSH 安装路径无效：{exception.Message}";
+            return false;
+        }
+
+        if (!Directory.Exists(normalizedDirectory))
+        {
+            error = $"DSH 安装目录不存在：{normalizedDirectory}";
+            return false;
+        }
+
+        var packageJsonPath = Path.Combine(normalizedDirectory, "package.json");
+        if (!File.Exists(packageJsonPath))
+        {
+            error = "所选目录不包含 package.json。请选择 @deepseek-ai/dsh 包目录。";
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(packageJsonPath));
+            var root = document.RootElement;
+            if (!root.TryGetProperty("name", out var name) ||
+                !string.Equals(name.GetString(), PackageName, StringComparison.Ordinal))
+            {
+                error = $"所选目录不是官方 {PackageName} 包。";
+                return false;
+            }
+
+            if (!root.TryGetProperty("version", out var versionProperty) ||
+                string.IsNullOrWhiteSpace(versionProperty.GetString()))
+            {
+                error = "DSH package.json 缺少有效版本号。";
+                return false;
+            }
+
+            var entry = ReadBinEntry(root);
+            if (string.IsNullOrWhiteSpace(entry))
+            {
+                error = "DSH package.json 缺少 bin.dsh 入口。";
+                return false;
+            }
+
+            var entryPoint = Path.GetFullPath(Path.Combine(normalizedDirectory, entry));
+            var directoryPrefix = normalizedDirectory + Path.DirectorySeparatorChar;
+            if (!entryPoint.StartsWith(directoryPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                error = "DSH 入口脚本不能位于所选包目录之外。";
+                return false;
+            }
+
+            if (!File.Exists(entryPoint))
+            {
+                error = $"DSH 入口脚本不存在：{entryPoint}";
+                return false;
+            }
+
+            installation = new DshInstallation(
+                source,
+                versionProperty.GetString()!,
+                normalizedDirectory,
+                entryPoint);
+            return true;
+        }
+        catch (JsonException exception)
+        {
+            error = $"DSH package.json 无法解析：{exception.Message}";
+            return false;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            error = $"无法读取 DSH 安装目录：{exception.Message}";
+            return false;
+        }
+    }
+
+    public static string? FindNodeExecutable(IEnumerable<string>? pathEntries = null)
     {
         var candidates = new List<string>();
-        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        candidates.AddRange(path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Select(part => Path.Combine(part.Trim().Trim('"'), "node.exe")));
+        candidates.AddRange((pathEntries ?? GetPathEntries())
+            .Select(NormalizeDirectory)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => Path.Combine(path, "node.exe")));
 
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         if (!string.IsNullOrWhiteSpace(programFiles))
@@ -71,23 +177,44 @@ public static class DshPackageLocator
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    public static string? FindNpxExecutable()
+    private static DshInstallation? TryCandidate(string packageDirectory, ISet<string> visited)
     {
-        var node = FindNodeExecutable();
-        if (node is not null)
+        string normalized;
+        try
         {
-            var besideNode = Path.Combine(Path.GetDirectoryName(node)!, "npx.cmd");
-            if (File.Exists(besideNode))
-            {
-                return besideNode;
-            }
+            normalized = Path.GetFullPath(packageDirectory);
+        }
+        catch
+        {
+            return null;
         }
 
-        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        return path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .Select(part => Path.Combine(part.Trim().Trim('"'), "npx.cmd"))
-            .FirstOrDefault(File.Exists);
+        if (!visited.Add(normalized))
+        {
+            return null;
+        }
+
+        return TryValidatePackageDirectory(
+            normalized,
+            DshInstallationSource.System,
+            out var installation,
+            out _)
+            ? installation
+            : null;
     }
+
+    private static bool HasDshShim(string path) =>
+        File.Exists(Path.Combine(path, "dsh.cmd")) ||
+        File.Exists(Path.Combine(path, "dsh.ps1")) ||
+        File.Exists(Path.Combine(path, "dsh.exe"));
+
+    private static IEnumerable<string> GetPathEntries()
+    {
+        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        return path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static string NormalizeDirectory(string value) => value.Trim().Trim('"');
 
     private static string? ReadBinEntry(JsonElement root)
     {
@@ -107,53 +234,58 @@ public static class DshPackageLocator
             : null;
     }
 
-    private sealed class SemanticVersionComparer : IComparer<string>
+    private static string? TryGetNpmGlobalRoot(IReadOnlyCollection<string> pathEntries)
     {
-        public static SemanticVersionComparer Instance { get; } = new();
-
-        public int Compare(string? left, string? right)
+        var node = FindNodeExecutable(pathEntries);
+        if (node is null)
         {
-            if (ReferenceEquals(left, right)) return 0;
-            if (left is null) return -1;
-            if (right is null) return 1;
+            return null;
+        }
 
-            var leftParts = Parse(left);
-            var rightParts = Parse(right);
-            var coreComparison = leftParts.Core.CompareTo(rightParts.Core);
-            if (coreComparison != 0) return coreComparison;
-            if (leftParts.PreRelease.Count == 0 && rightParts.PreRelease.Count > 0) return 1;
-            if (rightParts.PreRelease.Count == 0 && leftParts.PreRelease.Count > 0) return -1;
+        var nodeDirectory = Path.GetDirectoryName(node)!;
+        var npmCliCandidates = pathEntries
+            .Append(nodeDirectory)
+            .Select(NormalizeDirectory)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => Path.Combine(path, "node_modules", "npm", "bin", "npm-cli.js"));
+        var npmCli = npmCliCandidates.FirstOrDefault(File.Exists);
+        if (npmCli is null)
+        {
+            return null;
+        }
 
-            for (var index = 0; index < Math.Max(leftParts.PreRelease.Count, rightParts.PreRelease.Count); index++)
+        try
+        {
+            var startInfo = new ProcessStartInfo(node)
             {
-                if (index >= leftParts.PreRelease.Count) return -1;
-                if (index >= rightParts.PreRelease.Count) return 1;
-                var comparison = CompareIdentifier(leftParts.PreRelease[index], rightParts.PreRelease[index]);
-                if (comparison != 0) return comparison;
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            startInfo.ArgumentList.Add(npmCli);
+            startInfo.ArgumentList.Add("root");
+            startInfo.ArgumentList.Add("--global");
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return null;
             }
 
-            return 0;
-        }
+            if (!process.WaitForExit(5000))
+            {
+                process.Kill(entireProcessTree: true);
+                return null;
+            }
 
-        private static (Version Core, List<string> PreRelease) Parse(string value)
-        {
-            var withoutBuild = value.Split('+', 2)[0];
-            var parts = withoutBuild.Split('-', 2);
-            var core = Version.TryParse(parts[0], out var parsed) ? parsed : new Version(0, 0, 0);
-            var preRelease = parts.Length == 2
-                ? parts[1].Split('.', StringSplitOptions.RemoveEmptyEntries).ToList()
-                : [];
-            return (core, preRelease);
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            return process.ExitCode == 0 && Directory.Exists(output) ? output : null;
         }
-
-        private static int CompareIdentifier(string left, string right)
+        catch
         {
-            var leftNumeric = int.TryParse(left, out var leftNumber);
-            var rightNumeric = int.TryParse(right, out var rightNumber);
-            if (leftNumeric && rightNumeric) return leftNumber.CompareTo(rightNumber);
-            if (leftNumeric) return -1;
-            if (rightNumeric) return 1;
-            return string.Compare(left, right, StringComparison.OrdinalIgnoreCase);
+            return null;
         }
     }
 }
