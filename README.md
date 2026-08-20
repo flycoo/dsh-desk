@@ -23,11 +23,23 @@ dotnet build .\DshDesk.slnx
 dotnet run --project .\tests\DshDesk.Tests\DshDesk.Tests.csproj
 ```
 
-## 发布
+## 构建发布产物
 
 ```powershell
 dotnet publish .\src\DshDesk\DshDesk.csproj -c Release -r win-x64 --self-contained true -o .\artifacts\DSHDesk-win-x64
 ```
+
+## 部署
+
+“部署”指将本地构建产物部署到 `D:\app\DSHDesk`。确认 DSH Desk 已完全退出后运行：
+
+```powershell
+.\finish-deploy.cmd
+```
+
+## 发布
+
+“发布”指将版本发布到 GitHub（包括推送对应提交、版本标签和 GitHub Release），不表示复制到本机安装目录。
 
 DSH Desk 自身数据保存在：
 
