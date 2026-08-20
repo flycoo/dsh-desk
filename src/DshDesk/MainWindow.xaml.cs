@@ -98,6 +98,7 @@ public partial class MainWindow : Window
     private readonly LogService _log;
     private readonly DshProcessManager _processManager;
     private readonly Forms.NotifyIcon _trayIcon;
+    private readonly WindowWorkAreaMaximizer _windowWorkAreaMaximizer;
     private Uri? _allowedOrigin;
     private bool _webViewInitialized;
     private bool _isExiting;
@@ -119,6 +120,7 @@ public partial class MainWindow : Window
         _processManager = processManager;
 
         InitializeComponent();
+        _windowWorkAreaMaximizer = new WindowWorkAreaMaximizer(this);
         CloseToTrayCheckBox.IsChecked = settings.CloseToTray;
         _settingsInitialized = true;
         _processManager.StateChanged += ProcessManager_OnStateChanged;
@@ -128,6 +130,7 @@ public partial class MainWindow : Window
         Closing += MainWindow_OnClosing;
         Closed += (_, _) =>
         {
+            _windowWorkAreaMaximizer.Dispose();
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
             _processManager.StateChanged -= ProcessManager_OnStateChanged;
@@ -313,8 +316,7 @@ public partial class MainWindow : Window
             StatusText.Text = e.State switch
             {
                 DshRuntimeState.Ready when _processManager.CurrentInstallation is { } installation =>
-                    $"DSH {installation.Version} · " +
-                    (installation.Source == DshInstallationSource.System ? "系统安装" : "指定路径"),
+                    DshInstallationStatusText.FormatRunningStatus(installation),
                 DshRuntimeState.Ready => "DSH 已连接",
                 DshRuntimeState.Attached => "已连接现有 DSH",
                 DshRuntimeState.Faulted => "DSH 启动失败",
@@ -332,8 +334,7 @@ public partial class MainWindow : Window
             PopupAddressText.Text = e.Url is null ? string.Empty : $"地址：{e.Url.Authority}";
             var currentInstallation = _processManager.CurrentInstallation;
             PopupVersionText.Text = currentInstallation is not null
-                ? $"版本：{currentInstallation.Version} · " +
-                  (currentInstallation.Source == DshInstallationSource.System ? "系统安装" : "指定路径")
+                ? DshInstallationStatusText.FormatRunningDetails(currentInstallation)
                 : e.State == DshRuntimeState.Attached
                     ? "来源：外部服务"
                     : string.Empty;
@@ -375,9 +376,9 @@ public partial class MainWindow : Window
             ? $"{message}{Environment.NewLine}{Environment.NewLine}安装命令：{InstallCommand}"
             : message;
         StartupProgress.Visibility = Visibility.Collapsed;
-        RetryButton.Content = installationMissing ? "重新检测" : "重试";
-        ChooseInstallationButton.Visibility = installationMissing ? Visibility.Visible : Visibility.Collapsed;
-        CopyInstallCommandButton.Visibility = installationMissing ? Visibility.Visible : Visibility.Collapsed;
+        MissingInstallationActions.Visibility = installationMissing ? Visibility.Visible : Visibility.Collapsed;
+        RetryButton.Visibility = installationMissing ? Visibility.Collapsed : Visibility.Visible;
+        DetectAgainButton.Visibility = installationMissing ? Visibility.Visible : Visibility.Collapsed;
         ErrorActions.Visibility = Visibility.Visible;
     }
 
@@ -703,9 +704,10 @@ public partial class MainWindow : Window
     {
         DetectedInstallationText.Text = "正在检测系统 DSH…";
         var installation = await Task.Run(() => DshPackageLocator.FindSystemInstallation());
-        DetectedInstallationText.Text = installation is null
-            ? $"未检测到系统安装。可先执行：{InstallCommand}"
-            : $"版本：{installation.Version}{Environment.NewLine}{installation.PackageDirectory}";
+        DetectedInstallationText.Text = DshInstallationStatusText.FormatSystemDetection(
+            installation,
+            _processManager.CurrentInstallation,
+            InstallCommand);
     }
 
     private void CloseToTrayCheckBox_OnChanged(object sender, RoutedEventArgs e)

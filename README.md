@@ -10,6 +10,12 @@ npm install --global @deepseek-ai/dsh
 
 默认情况下，DSH Desk 会先连接 `127.0.0.1:3080` 上已经运行的 DeepSeek Harness，再从 PATH 和 npm 全局目录识别系统安装。也可以在设置中切换到“使用指定安装”，选择包含 `package.json` 的 `@deepseek-ai/dsh` 包目录。
 
+启动端口按以下优先级选择：
+
+1. **当前运行实例**：`127.0.0.1:3080`（或配置文件中 `AttachPort` 指定的端口）上已有健康的 DeepSeek Harness 时，直接连接，不启动新进程；
+2. **配置端口**：没有运行实例时，使用配置文件（`%LOCALAPPDATA%\DSHDesk\settings.json`）中 `AttachPort` 指定的端口自行启动 DSH；配置文件未指定端口时默认 `3080`；
+3. **随机端口**：配置端口已被其他程序占用时，改用 `--port 0`，由系统分配一个空闲端口。
+
 ## 开发
 
 ```powershell

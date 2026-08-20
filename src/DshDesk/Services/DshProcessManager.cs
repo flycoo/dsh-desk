@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using DshDesk.Models;
 
 namespace DshDesk.Services;
@@ -15,6 +17,9 @@ public sealed class DshProcessManager : IDisposable
     private Process? _ownedProcess;
     private TaskCompletionSource<Uri>? _readyUrl;
     private bool _stopping;
+
+    /// <summary>How long to wait for a graceful exit before force-killing the tree.</summary>
+    private const int StopGraceSeconds = 5;
 
     public DshProcessManager(DshSettings settings, LogService log)
     {
@@ -79,7 +84,17 @@ public sealed class DshProcessManager : IDisposable
                 $"Starting DSH {installation.Version} from {installation.EntryPoint} " +
                 $"(source: {installation.Source}, package: {installation.PackageDirectory})");
 
-            var startInfo = CreateStartInfo(nodeExecutable, installation, _settings.WorkspaceDirectory);
+            var startPort = ResolveStartPort(_settings.AttachPort);
+            _log.Info(
+                startPort == 0
+                    ? $"Configured port {_settings.AttachPort} is occupied; letting the OS pick a free port"
+                    : $"Starting DSH on port {startPort}");
+
+            var startInfo = CreateStartInfo(
+                nodeExecutable,
+                installation,
+                _settings.WorkspaceDirectory,
+                startPort);
 
             _readyUrl = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
             _stopping = false;
@@ -193,7 +208,8 @@ public sealed class DshProcessManager : IDisposable
     public static ProcessStartInfo CreateStartInfo(
         string nodeExecutable,
         DshInstallation installation,
-        string workspaceDirectory)
+        string workspaceDirectory,
+        int webPort = 0)
     {
         ValidateWorkspaceDirectory(workspaceDirectory);
         var startInfo = new ProcessStartInfo(nodeExecutable)
@@ -207,13 +223,43 @@ public sealed class DshProcessManager : IDisposable
         };
         startInfo.ArgumentList.Add(installation.EntryPoint);
         startInfo.ArgumentList.Add("web");
+        startInfo.ArgumentList.Add("--no-open");
         startInfo.ArgumentList.Add("--host");
         startInfo.ArgumentList.Add("127.0.0.1");
         startInfo.ArgumentList.Add("--port");
-        startInfo.ArgumentList.Add("0");
+        startInfo.ArgumentList.Add(webPort.ToString());
         startInfo.Environment.Remove("SSH_CONNECTION");
         startInfo.Environment.Remove("SSH_TTY");
         return startInfo;
+    }
+
+    /// <summary>
+    /// Pick the port for a self-started DSH: use the configured port when it is
+    /// free, otherwise 0 so the OS assigns an ephemeral one. The caller already
+    /// attached to a running instance when one was healthy on that port.
+    /// </summary>
+    public static int ResolveStartPort(int configuredPort)
+    {
+        return IsPortInUse(configuredPort) ? 0 : configuredPort;
+    }
+
+    /// <summary>
+    /// Whether a loopback listener can bind the given port — mirrors what
+    /// <c>dsh web --host 127.0.0.1 --port &lt;port&gt;</c> needs. A port of 0
+    /// always reports free, since the OS assigns an ephemeral port for it.
+    /// </summary>
+    public static bool IsPortInUse(int port)
+    {
+        try
+        {
+            using var listener = new TcpListener(IPAddress.Loopback, port);
+            listener.Start();
+            return false;
+        }
+        catch (SocketException)
+        {
+            return true;
+        }
     }
 
     public static DshInstallation ResolveInstallation(
@@ -266,9 +312,10 @@ public sealed class DshProcessManager : IDisposable
         {
             if (!process.HasExited)
             {
-                _log.Info($"Stopping owned DSH process {process.Id}");
-                process.Kill(entireProcessTree: true);
-                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false);
+                await StopGracefullyAsync(
+                    process,
+                    TimeSpan.FromSeconds(StopGraceSeconds),
+                    _log.Info).ConfigureAwait(false);
             }
         }
         catch (Exception exception)
@@ -280,6 +327,58 @@ public sealed class DshProcessManager : IDisposable
             process.Dispose();
             _stopping = false;
             SetState(DshRuntimeState.Stopped, "DSH 已停止");
+        }
+    }
+
+    /// <summary>
+    /// Stop one process gracefully, escalating to a force kill of its whole tree
+    /// after <paramref name="grace"/> elapses without an exit. Windows has no
+    /// POSIX signals and the child is console-less, so no out-of-band signal can
+    /// reach it; the graceful phase is therefore a bounded wait that lets the
+    /// process finish its own shutdown before we escalate.
+    ///
+    /// We deliberately do not shell out to kill tools (taskkill etc.): a hidden
+    /// helper process terminating another process is exactly the pattern
+    /// endpoint-security products (e.g. 火绒) flag, and it is a no-op for this
+    /// process anyway. The force kill uses the in-process
+    /// <see cref="Process.Kill(bool)"/> tree API — a parent stopping its own
+    /// child — which behavior monitoring treats as normal, not malicious.
+    /// </summary>
+    public static async Task StopGracefullyAsync(
+        Process process,
+        TimeSpan grace,
+        Action<string>? log = null)
+    {
+        if (process is null || process.HasExited)
+        {
+            return;
+        }
+
+        log?.Invoke($"Waiting up to {grace.TotalSeconds:0} s for DSH process {process.Id} to exit gracefully…");
+
+        var deadline = DateTime.UtcNow + grace;
+        while (!process.HasExited && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(100).ConfigureAwait(false);
+        }
+
+        if (!process.HasExited)
+        {
+            log?.Invoke($"DSH process {process.Id} did not exit within the grace period; force-killing its tree");
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // The process exited between the liveness check and the kill.
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // Same race, or the tree is already gone.
+            }
+
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false);
         }
     }
 

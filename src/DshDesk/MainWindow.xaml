@@ -115,6 +115,105 @@
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="ErrorCardActionButtonBase" TargetType="Button">
+      <Setter Property="Height" Value="42" />
+      <Setter Property="MinWidth" Value="164" />
+      <Setter Property="Padding" Value="18,0" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ErrorActionRoot"
+                    Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="7">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                RecognizesAccessKey="True" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ErrorActionRoot" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+                <Setter TargetName="ErrorActionRoot" Property="Opacity" Value="0.92" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ErrorActionRoot" Property="Opacity" Value="0.78" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="ErrorActionRoot" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+                <Setter TargetName="ErrorActionRoot" Property="BorderThickness" Value="2" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="ErrorPrimaryButton"
+           TargetType="Button"
+           BasedOn="{StaticResource ErrorCardActionButtonBase}">
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style x:Key="ErrorSecondaryButton"
+           TargetType="Button"
+           BasedOn="{StaticResource ErrorCardActionButtonBase}">
+      <Setter Property="Background" Value="{DynamicResource SurfaceBackground}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+    </Style>
+    <Style x:Key="ErrorUtilityButton" TargetType="Button">
+      <Setter Property="Height" Value="36" />
+      <Setter Property="MinWidth" Value="64" />
+      <Setter Property="Padding" Value="11,0" />
+      <Setter Property="Margin" Value="2,0" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ErrorUtilityRoot"
+                    Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="6">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                RecognizesAccessKey="True" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="ErrorUtilityRoot" Property="Background" Value="{DynamicResource SurfaceBackground}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="ErrorUtilityRoot" Property="Background" Value="{DynamicResource AccentPressedBrush}" />
+                <Setter Property="Foreground" Value="White" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="ErrorUtilityRoot" Property="BorderBrush" Value="{DynamicResource AccentHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <Style x:Key="MenuButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
       <Setter Property="HorizontalContentAlignment" Value="Left" />
       <Setter Property="Padding" Value="12,10" />
@@ -184,8 +283,22 @@
           <Button Style="{StaticResource TitleButton}" ToolTip="最小化" Click="MinimizeButton_OnClick">
             <TextBlock Text="─" />
           </Button>
-          <Button Style="{StaticResource TitleButton}" ToolTip="最大化" Click="MaximizeButton_OnClick">
-            <TextBlock Text="□" FontSize="15" />
+          <Button x:Name="MaximizeButton"
+                  FontFamily="Segoe MDL2 Assets"
+                  FontSize="10"
+                  Click="MaximizeButton_OnClick">
+            <Button.Style>
+              <Style TargetType="Button" BasedOn="{StaticResource TitleButton}">
+                <Setter Property="Content" Value="&#xE922;" />
+                <Setter Property="ToolTip" Value="最大化" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType={x:Type Window}}}" Value="Maximized">
+                    <Setter Property="Content" Value="&#xE923;" />
+                    <Setter Property="ToolTip" Value="还原" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </Button.Style>
           </Button>
           <Button x:Name="CloseButton" Style="{StaticResource TitleButton}" ToolTip="关闭到托盘" Click="CloseButton_OnClick">
             <TextBlock Text="✕" />
@@ -275,13 +388,48 @@
                            Margin="0,24,0,0"
                            IsIndeterminate="True"
                            Foreground="{DynamicResource AccentBrush}" />
-              <WrapPanel x:Name="ErrorActions" Visibility="Collapsed" HorizontalAlignment="Center" Margin="0,24,0,0">
-                <Button x:Name="RetryButton" Style="{StaticResource ActionButton}" Content="重试" Click="RetryButton_OnClick" />
-                <Button x:Name="ChooseInstallationButton" Style="{StaticResource ActionButton}" Content="选择安装目录" Click="ChooseInstallationButton_OnClick" />
-                <Button x:Name="CopyInstallCommandButton" Style="{StaticResource ActionButton}" Content="复制安装命令" Click="CopyInstallCommandButton_OnClick" />
-                <Button Style="{StaticResource ActionButton}" Content="查看日志" Click="OpenLogsButton_OnClick" />
-                <Button Style="{StaticResource ActionButton}" Content="退出" Click="ExitButton_OnClick" />
-              </WrapPanel>
+              <StackPanel x:Name="ErrorActions" Visibility="Collapsed" Margin="0,24,0,0">
+                <Grid x:Name="MissingInstallationActions"
+                      Width="360"
+                      HorizontalAlignment="Center"
+                      Visibility="Collapsed">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <Button x:Name="CopyInstallCommandButton"
+                          Grid.Column="0"
+                          Style="{StaticResource ErrorPrimaryButton}"
+                          Content="复制安装命令"
+                          Click="CopyInstallCommandButton_OnClick" />
+                  <Button x:Name="ChooseInstallationButton"
+                          Grid.Column="2"
+                          Style="{StaticResource ErrorSecondaryButton}"
+                          Content="选择已有 DSH"
+                          Click="ChooseInstallationButton_OnClick" />
+                </Grid>
+                <Button x:Name="RetryButton"
+                        Style="{StaticResource ErrorPrimaryButton}"
+                        HorizontalAlignment="Center"
+                        Content="重试"
+                        Click="RetryButton_OnClick" />
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Center"
+                            Margin="0,10,0,0">
+                  <Button x:Name="DetectAgainButton"
+                          Style="{StaticResource ErrorUtilityButton}"
+                          Content="重新检测"
+                          Visibility="Collapsed"
+                          Click="RetryButton_OnClick" />
+                  <Button Style="{StaticResource ErrorUtilityButton}"
+                          Content="查看日志"
+                          Click="OpenLogsButton_OnClick" />
+                  <Button Style="{StaticResource ErrorUtilityButton}"
+                          Content="退出"
+                          Click="ExitButton_OnClick" />
+                </StackPanel>
+              </StackPanel>
             </StackPanel>
           </Border>
         </Grid>

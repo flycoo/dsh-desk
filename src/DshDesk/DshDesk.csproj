@@ -20,6 +20,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DshDesk.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Resource Include="Assets\app-icon.png" />
     <Resource Include="Assets\app-icon.ico" />
   </ItemGroup>

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -19,17 +20,23 @@ internal static class Program
             ("解析 DSH 启动地址", TestReadyLineParser),
             ("限制 WebView2 导航来源", TestNavigationPolicy),
             ("读写新版设置", TestSettingsRoundTrip),
+            ("配置文件缺失端口时默认 3080", TestSettingsMissingPortDefaultsTo3080),
             ("默认目录不再使用 G 盘", TestDefaultPaths),
             ("解析 DSH 页面主题", TestThemeMessageParser),
+            ("计算窗口最大化工作区", TestWindowMaximizeBounds),
             ("验证官方 DSH 包目录", TestPackageValidation),
             ("拒绝损坏或越界的 DSH 包", TestInvalidPackages),
             ("PATH 中的 DSH 按顺序优先", TestPathDiscoveryPrecedence),
             ("回退标准 npm 全局目录", TestStandardNpmDiscovery),
             ("回退 npm root 全局目录", TestNpmRootDiscovery),
+            ("区分运行中 DSH 与可用安装", TestInstallationStatusText),
             ("指定模式不回退自动检测", TestSpecifiedModeDoesNotFallback),
             ("缺少安装时返回专用错误", TestMissingInstallationError),
             ("指定模式处理现有服务的三种选择", TestExistingServiceChoices),
             ("构造安全的 DSH 启动参数", TestProcessStartInfo),
+            ("识别端口占用状态", TestPortOccupancy),
+            ("优雅停止超时后强杀进程树", TestStopGracefulThenForce),
+            ("优雅窗口内自行退出的进程不被强杀", TestSelfExitingProcessNotForceKilled),
             ("识别健康的 DeepSeek Harness 页面", TestHealthProbe),
             ("连接外部 DSH 时不终止服务", TestAttachDoesNotStopExternalService)
         };
@@ -93,6 +100,19 @@ internal static class Program
             Equal(settings.WorkspaceDirectory, loaded.WorkspaceDirectory, "Workspace 未保存");
             Equal(settings.AttachPort, loaded.AttachPort, "端口未保存");
             Equal(settings.CloseToTray, loaded.CloseToTray, "托盘设置未保存");
+        });
+        return Task.CompletedTask;
+    }
+
+    private static Task TestSettingsMissingPortDefaultsTo3080()
+    {
+        WithTemporaryDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "settings.json");
+            File.WriteAllText(path, """{"InstallationMode":0,"WorkspaceDirectory":"C:\\temp"}""");
+            var store = new SettingsStore(path);
+            var loaded = store.Load();
+            Equal(3080, loaded.AttachPort, "配置文件缺失端口时应默认 3080");
         });
         return Task.CompletedTask;
     }
@@ -225,6 +245,78 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static Task TestWindowMaximizeBounds()
+    {
+        var bottomTaskbar = WindowWorkAreaMaximizer.CalculateBounds(
+            0, 0,
+            0, 0, 2560, 1380);
+        Equal(new WindowMaximizeBounds(0, 0, 2560, 1380), bottomTaskbar,
+            "底部任务栏应从最大化高度中排除");
+
+        var topTaskbar = WindowWorkAreaMaximizer.CalculateBounds(
+            0, 0,
+            0, 48, 1920, 1080);
+        Equal(new WindowMaximizeBounds(0, 48, 1920, 1032), topTaskbar,
+            "顶部任务栏应偏移最大化窗口");
+
+        var leftTaskbar = WindowWorkAreaMaximizer.CalculateBounds(
+            0, 0,
+            56, 0, 1920, 1080);
+        Equal(new WindowMaximizeBounds(56, 0, 1864, 1080), leftTaskbar,
+            "左侧任务栏应偏移并收窄最大化窗口");
+
+        var rightTaskbar = WindowWorkAreaMaximizer.CalculateBounds(
+            0, 0,
+            0, 0, 1864, 1080);
+        Equal(new WindowMaximizeBounds(0, 0, 1864, 1080), rightTaskbar,
+            "右侧任务栏应收窄最大化窗口");
+
+        var secondaryMonitor = WindowWorkAreaMaximizer.CalculateBounds(
+            -1920, -120,
+            -1864, -72, 0, 960);
+        Equal(new WindowMaximizeBounds(56, 48, 1864, 1032), secondaryMonitor,
+            "负坐标副显示器应使用相对显示器的最大化位置");
+
+        Assert(WindowWorkAreaMaximizer.TryGetBoundsForWindow(IntPtr.Zero, out var actualWorkArea),
+            "应能通过 Windows API 获取当前工作区");
+        Assert(actualWorkArea.Width > 0 && actualWorkArea.Height > 0,
+            "Windows API 返回的工作区尺寸应有效");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestInstallationStatusText()
+    {
+        var running = new DshInstallation(
+            DshInstallationSource.System,
+            "0.1.0-rc.7",
+            @"C:\npm\node_modules\@deepseek-ai\dsh",
+            @"C:\npm\node_modules\@deepseek-ai\dsh\lib\bin.js");
+
+        Equal("DSH 0.1.0-rc.7 · 运行中",
+            DshInstallationStatusText.FormatRunningStatus(running),
+            "顶部应显示运行状态，而不是声明安装仍可用");
+
+        var unavailable = DshInstallationStatusText.FormatSystemDetection(
+            null,
+            running,
+            "npm install --global @deepseek-ai/dsh");
+        Assert(unavailable.Contains("当前仍在运行 DSH 0.1.0-rc.7", StringComparison.Ordinal),
+            "应保留当前运行版本");
+        Assert(unavailable.Contains("系统安装已不可用", StringComparison.Ordinal),
+            "应明确说明磁盘安装已不可用");
+
+        var detected = running with { Version = "0.1.0-rc.8" };
+        var available = DshInstallationStatusText.FormatSystemDetection(
+            detected,
+            running,
+            "npm install --global @deepseek-ai/dsh");
+        Assert(available.Contains("版本：0.1.0-rc.8", StringComparison.Ordinal),
+            "应优先显示当前检测到的安装");
+        Assert(!available.Contains("0.1.0-rc.7", StringComparison.Ordinal),
+            "不应用运行中的旧版本覆盖当前安装版本");
+        return Task.CompletedTask;
+    }
+
     private static Task TestSpecifiedModeDoesNotFallback()
     {
         var providerCalled = false;
@@ -302,16 +394,20 @@ internal static class Program
                 Environment.SetEnvironmentVariable("SSH_CONNECTION", "secret-connection");
                 Environment.SetEnvironmentVariable("SSH_TTY", "secret-tty");
 
-                var startInfo = DshProcessManager.CreateStartInfo("node.exe", installation!, directory);
+                var startInfo = DshProcessManager.CreateStartInfo("node.exe", installation!, directory, 3080);
                 Equal(Path.GetFullPath(directory), startInfo.WorkingDirectory, "Workspace 未应用");
                 Assert(startInfo.ArgumentList.SequenceEqual([
                     installation!.EntryPoint,
                     "web",
+                    "--no-open",
                     "--host",
                     "127.0.0.1",
                     "--port",
-                    "0"
+                    "3080"
                 ]), "启动参数错误");
+
+                var randomStartInfo = DshProcessManager.CreateStartInfo("node.exe", installation!, directory, 0);
+                Equal("0", randomStartInfo.ArgumentList[^1], "传 0 时应让系统分配端口");
                 Equal("inherited-home", startInfo.Environment["DSH_HOME"], "DSH_HOME 应原样继承");
                 Equal("inherited-cache", startInfo.Environment["npm_config_cache"], "npm 缓存变量应原样继承");
                 Assert(!startInfo.Environment.ContainsKey("SSH_CONNECTION"), "应移除 SSH_CONNECTION");
@@ -368,6 +464,63 @@ internal static class Program
             await manager.StopOwnedAsync();
             Assert(listener.Server.IsBound, "停止自管进程不能关闭外部监听器");
         });
+    }
+
+    private static Task TestPortOccupancy()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Assert(DshProcessManager.IsPortInUse(port), "占用中的端口应被识别");
+        Assert(DshProcessManager.ResolveStartPort(port) == 0, "端口占用时应回退到随机端口");
+
+        listener.Stop();
+        Assert(!DshProcessManager.IsPortInUse(port), "释放后的端口应视为空闲");
+        Equal(port, DshProcessManager.ResolveStartPort(port), "端口空闲时应使用配置端口");
+        Assert(!DshProcessManager.IsPortInUse(0), "端口 0 应视为可用（系统分配）");
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestStopGracefulThenForce()
+    {
+        // 一个永远不会自行退出的 node 进程:优雅信号(尽力而为)后必须在
+        // 宽限期内被兜底强杀。
+        var startInfo = new ProcessStartInfo("node")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("-e");
+        startInfo.ArgumentList.Add("setInterval(() => {}, 1000)");
+        using var process = Process.Start(startInfo)!;
+        try
+        {
+            await DshProcessManager.StopGracefullyAsync(process, TimeSpan.FromSeconds(1));
+            Assert(process.HasExited, "进程应在优雅→强杀流程结束后退出");
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* 测试清理 */ }
+            }
+        }
+    }
+
+    private static async Task TestSelfExitingProcessNotForceKilled()
+    {
+        // 在宽限期内自行退出的进程不应被强杀(退出码保持 0)。
+        var startInfo = new ProcessStartInfo("node")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("-e");
+        startInfo.ArgumentList.Add("setTimeout(() => process.exit(0), 300)");
+        using var process = Process.Start(startInfo)!;
+        await DshProcessManager.StopGracefullyAsync(process, TimeSpan.FromSeconds(3));
+        Assert(process.HasExited, "进程应自行退出");
+        Equal(0, process.ExitCode, "自行退出不应被强杀");
     }
 
     private static async Task ServeHealthyPageOnceAsync(TcpListener listener)
