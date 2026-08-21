@@ -105,6 +105,7 @@ public partial class MainWindow : Window
     private bool _trayHintShown;
     private bool _settingsInitialized;
     private bool _hasPageTheme;
+    private bool _dshOperationInProgress;
     private string _draftDshPackageDirectory = string.Empty;
     private string _draftWorkspaceDirectory = string.Empty;
     private bool _pendingRestoreDrag;
@@ -155,33 +156,57 @@ public partial class MainWindow : Window
 
     private async Task StartDshAsync(bool restart = false, bool? attachExistingOverride = null)
     {
-        var attachExisting = attachExistingOverride ?? true;
-        if (attachExistingOverride is null && _settings.InstallationMode == DshInstallationMode.SpecifiedPath)
+        if (_dshOperationInProgress)
         {
-            var existingHealthy = await _processManager.IsHealthyDshAsync(_processManager.AttachUrl);
-            var choice = existingHealthy ? ShowExistingDshDialog() : ExistingDshChoice.LaunchSpecified;
-            var decision = DshLaunchPolicy.Decide(_settings.InstallationMode, existingHealthy, choice);
-            if (!decision.ApplyChanges)
-            {
-                return;
-            }
-
-            attachExisting = decision.AttachExisting;
+            return;
         }
 
-        ShowStarting("正在启动 DeepSeek Harness", restart ? "正在重新连接本机服务…" : "正在检查本机环境…");
+        _dshOperationInProgress = true;
         try
         {
-            EnsureWebViewRuntimeAvailable();
-            var url = restart
-                ? await _processManager.RestartAsync(attachExisting)
-                : await _processManager.StartOrAttachAsync(attachExisting);
-            await NavigateToDshAsync(url);
+            var attachExisting = attachExistingOverride ?? true;
+            if (attachExistingOverride is null && _settings.InstallationMode == DshInstallationMode.SpecifiedPath)
+            {
+                var existingHealthy = await _processManager.IsHealthyDshAsync(_processManager.AttachUrl);
+                var choice = existingHealthy ? ShowExistingDshDialog() : ExistingDshChoice.LaunchSpecified;
+                var decision = DshLaunchPolicy.Decide(_settings.InstallationMode, existingHealthy, choice);
+                if (!decision.ApplyChanges)
+                {
+                    return;
+                }
+
+                attachExisting = decision.AttachExisting;
+            }
+
+            var keepCurrentContent = restart &&
+                                     _webViewInitialized &&
+                                     HarnessWebView.Visibility == Visibility.Visible &&
+                                     LaunchOverlay.Visibility == Visibility.Collapsed;
+            var wasOwnedProcess = _processManager.OwnsCurrentProcess;
+            if (!keepCurrentContent)
+            {
+                ShowStarting("正在启动 DeepSeek Harness", restart ? "正在重新连接本机服务…" : "正在检查本机环境…");
+            }
+
+            try
+            {
+                EnsureWebViewRuntimeAvailable();
+                var url = restart
+                    ? await _processManager.RestartAsync(attachExisting)
+                    : await _processManager.StartOrAttachAsync(attachExisting);
+                await NavigateToDshAsync(
+                    url,
+                    keepCurrentPageIfSame: keepCurrentContent && !wasOwnedProcess);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(exception, "Unable to start DSH Desk");
+                ShowFailure(exception);
+            }
         }
-        catch (Exception exception)
+        finally
         {
-            _log.Error(exception, "Unable to start DSH Desk");
-            ShowFailure(exception);
+            _dshOperationInProgress = false;
         }
     }
 
@@ -209,7 +234,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task NavigateToDshAsync(Uri url)
+    private async Task NavigateToDshAsync(Uri url, bool keepCurrentPageIfSame = false)
     {
         if (!_webViewInitialized)
         {
@@ -228,6 +253,11 @@ public partial class MainWindow : Window
         }
 
         _allowedOrigin = url;
+        if (keepCurrentPageIfSame && HarnessWebView.Source == url)
+        {
+            return;
+        }
+
         HarnessWebView.Visibility = Visibility.Visible;
         HarnessWebView.Source = url;
     }

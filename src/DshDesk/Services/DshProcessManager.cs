@@ -50,6 +50,20 @@ public sealed class DshProcessManager : IDisposable
         CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await StartOrAttachCoreAsync(attachExisting, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<Uri> StartOrAttachCoreAsync(
+        bool attachExisting,
+        CancellationToken cancellationToken)
+    {
         var startupTransitionBegan = false;
         try
         {
@@ -152,17 +166,30 @@ public sealed class DshProcessManager : IDisposable
             }
             throw;
         }
-        finally
-        {
-            _gate.Release();
-        }
     }
 
     public async Task<Uri> RestartAsync(
         bool attachExisting = true,
         CancellationToken cancellationToken = default)
     {
-        return await StartOrAttachAsync(attachExisting, cancellationToken).ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // A health probe against AttachUrl can find the process that this
+            // manager owns. Stop it before probing, otherwise the old process
+            // is mistaken for an external DSH and is returned after being killed.
+            if (OwnsCurrentProcess)
+            {
+                await StopOwnedCoreAsync().ConfigureAwait(false);
+                attachExisting = false;
+            }
+
+            return await StartOrAttachCoreAsync(attachExisting, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     public async Task StopOwnedAsync()

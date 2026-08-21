@@ -39,7 +39,8 @@ internal static class Program
             ("优雅停止超时后强杀进程树", TestStopGracefulThenForce),
             ("优雅窗口内自行退出的进程不被强杀", TestSelfExitingProcessNotForceKilled),
             ("识别健康的 DeepSeek Harness 页面", TestHealthProbe),
-            ("连接外部 DSH 时不终止服务", TestAttachDoesNotStopExternalService)
+            ("连接外部 DSH 时不终止服务", TestAttachDoesNotStopExternalService),
+            ("重启自管 DSH 后仍保持自管状态", TestRestartOwnedService)
         };
 
         foreach (var test in tests)
@@ -495,6 +496,55 @@ internal static class Program
             Equal(port, url.Port, "连接端口错误");
             await manager.StopOwnedAsync();
             Assert(listener.Server.IsBound, "停止自管进程不能关闭外部监听器");
+        });
+    }
+
+    private static async Task TestRestartOwnedService()
+    {
+        await WithTemporaryDirectoryAsync(async directory =>
+        {
+            var packageDirectory = Path.Combine(directory, "dsh");
+            CreatePackage(packageDirectory, "1.0.0");
+            File.WriteAllText(
+                Path.Combine(packageDirectory, "lib", "bin.js"),
+                """
+                const http = require('http');
+                const portIndex = process.argv.indexOf('--port');
+                const requestedPort = Number(process.argv[portIndex + 1]);
+                const server = http.createServer((_, response) => {
+                  const body = '<html><title>DeepSeek Harness</title></html>';
+                  response.writeHead(200, { 'Content-Type': 'text/html', 'Content-Length': Buffer.byteLength(body) });
+                  response.end(body);
+                });
+                server.listen(requestedPort, '127.0.0.1', () => {
+                  console.log(`dsh web: http://127.0.0.1:${server.address().port}`);
+                });
+                """);
+
+            using var portReservation = new TcpListener(IPAddress.Loopback, 0);
+            portReservation.Start();
+            var port = ((IPEndPoint)portReservation.LocalEndpoint).Port;
+            portReservation.Stop();
+
+            var settings = new DshSettings
+            {
+                InstallationMode = DshInstallationMode.SpecifiedPath,
+                DshPackageDirectory = packageDirectory,
+                WorkspaceDirectory = directory,
+                AttachPort = port,
+                StartupTimeoutSeconds = 10
+            };
+            var log = new LogService(directory);
+            using var manager = new DshProcessManager(settings, log);
+            await manager.StartOrAttachAsync(attachExisting: false);
+            Assert(manager.OwnsCurrentProcess, "首次启动后应持有 DSH 进程");
+
+            var restartedUrl = await manager.RestartAsync();
+            Equal(DshRuntimeState.Ready, manager.State, "重启后不应误判为外部服务");
+            Assert(manager.OwnsCurrentProcess, "重启后应持有新 DSH 进程");
+            Equal(port, restartedUrl.Port, "重启后应继续使用配置端口");
+
+            await manager.StopOwnedAsync();
         });
     }
 
