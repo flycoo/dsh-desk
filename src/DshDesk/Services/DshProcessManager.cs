@@ -15,6 +15,7 @@ public sealed class DshProcessManager : IDisposable
     private readonly HttpClient _httpClient;
     private readonly ConcurrentQueue<string> _recentOutput = new();
     private Process? _ownedProcess;
+    private ConPtyProcess? _ownedConsoleSession;
     private TaskCompletionSource<Uri>? _readyUrl;
     private bool _stopping;
 
@@ -112,20 +113,14 @@ public sealed class DshProcessManager : IDisposable
 
             _readyUrl = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
             _stopping = false;
-            var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-            process.OutputDataReceived += OnOutputDataReceived;
-            process.ErrorDataReceived += OnErrorDataReceived;
-            process.Exited += OnProcessExited;
-
-            if (!process.Start())
-            {
-                process.Dispose();
-                throw new InvalidOperationException("Node.js 进程没有成功启动。");
-            }
-
+            var consoleSession = ConPtyProcess.Start(
+                startInfo,
+                line => HandleProcessLine(line, false));
+            var process = consoleSession.Process;
             _ownedProcess = process;
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+            _ownedConsoleSession = consoleSession;
+            process.EnableRaisingEvents = true;
+            process.Exited += OnProcessExited;
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_settings.StartupTimeoutSeconds, 10, 180)));
@@ -324,13 +319,16 @@ public sealed class DshProcessManager : IDisposable
     private async Task StopOwnedCoreAsync()
     {
         var process = _ownedProcess;
+        var consoleSession = _ownedConsoleSession;
         _ownedProcess = null;
+        _ownedConsoleSession = null;
         _readyUrl = null;
         CurrentUrl = null;
         CurrentInstallation = null;
         CurrentVersion = null;
         if (process is null)
         {
+            consoleSession?.Dispose();
             return;
         }
 
@@ -341,8 +339,9 @@ public sealed class DshProcessManager : IDisposable
             {
                 await StopGracefullyAsync(
                     process,
-                    TimeSpan.FromSeconds(StopGraceSeconds),
-                    _log.Info).ConfigureAwait(false);
+                    TimeSpan.FromSeconds(StopGraceSeconds + 1),
+                    _log.Info,
+                    consoleSession is null ? null : consoleSession.SendCtrlCAsync).ConfigureAwait(false);
             }
         }
         catch (Exception exception)
@@ -351,6 +350,7 @@ public sealed class DshProcessManager : IDisposable
         }
         finally
         {
+            consoleSession?.Dispose();
             process.Dispose();
             _stopping = false;
             SetState(DshRuntimeState.Stopped, "DSH 已停止");
@@ -358,11 +358,10 @@ public sealed class DshProcessManager : IDisposable
     }
 
     /// <summary>
-    /// Stop one process gracefully, escalating to a force kill of its whole tree
-    /// after <paramref name="grace"/> elapses without an exit. Windows has no
-    /// POSIX signals and the child is console-less, so no out-of-band signal can
-    /// reach it; the graceful phase is therefore a bounded wait that lets the
-    /// process finish its own shutdown before we escalate.
+    /// Request one process to stop gracefully, escalating to a force kill of
+    /// its whole tree after <paramref name="grace"/> elapses without an exit.
+    /// DSH runs in ConPTY, so writing Ctrl+C reaches its official SIGINT handler
+    /// and disposes the mounted application tree before Node exits.
     ///
     /// We deliberately do not shell out to kill tools (taskkill etc.): a hidden
     /// helper process terminating another process is exactly the pattern
@@ -374,11 +373,26 @@ public sealed class DshProcessManager : IDisposable
     public static async Task StopGracefullyAsync(
         Process process,
         TimeSpan grace,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        Func<Task>? requestStop = null)
     {
         if (process is null || process.HasExited)
         {
             return;
+        }
+
+        if (requestStop is not null)
+        {
+            try
+            {
+                log?.Invoke($"Sending Ctrl+C to DSH process {process.Id} for graceful shutdown…");
+                await requestStop().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                log?.Invoke($"Unable to send Ctrl+C to DSH process {process.Id}: {exception.Message}");
+                grace = TimeSpan.Zero;
+            }
         }
 
         log?.Invoke($"Waiting up to {grace.TotalSeconds:0} s for DSH process {process.Id} to exit gracefully…");
@@ -408,10 +422,6 @@ public sealed class DshProcessManager : IDisposable
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false);
         }
     }
-
-    private void OnOutputDataReceived(object sender, DataReceivedEventArgs args) => HandleProcessLine(args.Data, false);
-
-    private void OnErrorDataReceived(object sender, DataReceivedEventArgs args) => HandleProcessLine(args.Data, true);
 
     private void HandleProcessLine(string? line, bool isError)
     {
@@ -463,6 +473,7 @@ public sealed class DshProcessManager : IDisposable
     {
         _httpClient.Dispose();
         _gate.Dispose();
+        _ownedConsoleSession?.Dispose();
         _ownedProcess?.Dispose();
     }
 }

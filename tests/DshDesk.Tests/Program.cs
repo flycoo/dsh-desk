@@ -37,6 +37,8 @@ internal static class Program
             ("构造安全的 DSH 启动参数", TestProcessStartInfo),
             ("识别端口占用状态", TestPortOccupancy),
             ("优雅停止超时后强杀进程树", TestStopGracefulThenForce),
+            ("ConPTY 向 Node.js 传递 Ctrl+C", TestConPtyCtrlC),
+            ("ConPTY 正确转义启动参数", TestConPtyArgumentQuoting),
             ("优雅窗口内自行退出的进程不被强杀", TestSelfExitingProcessNotForceKilled),
             ("识别健康的 DeepSeek Harness 页面", TestHealthProbe),
             ("连接外部 DSH 时不终止服务", TestAttachDoesNotStopExternalService),
@@ -519,6 +521,7 @@ internal static class Program
                 server.listen(requestedPort, '127.0.0.1', () => {
                   console.log(`dsh web: http://127.0.0.1:${server.address().port}`);
                 });
+                process.on('SIGINT', () => server.close(() => process.exit(0)));
                 """);
 
             using var portReservation = new TcpListener(IPAddress.Loopback, 0);
@@ -587,6 +590,64 @@ internal static class Program
                 try { process.Kill(entireProcessTree: true); } catch { /* 测试清理 */ }
             }
         }
+    }
+
+    private static async Task TestConPtyCtrlC()
+    {
+        var nodeExecutable = DshPackageLocator.FindNodeExecutable()
+            ?? throw new InvalidOperationException("测试需要 Node.js");
+        var startInfo = new ProcessStartInfo(nodeExecutable)
+        {
+            WorkingDirectory = Environment.CurrentDirectory,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add("-e");
+        startInfo.ArgumentList.Add(
+            "process.on('SIGINT',()=>{console.log('graceful-sigint');process.exit(0)});" +
+            "console.log('conpty-ready');setInterval(()=>{},1000)");
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var graceful = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var session = ConPtyProcess.Start(startInfo, line =>
+        {
+            if (line.Contains("conpty-ready", StringComparison.Ordinal)) ready.TrySetResult();
+            if (line.Contains("graceful-sigint", StringComparison.Ordinal)) graceful.TrySetResult();
+        });
+        try
+        {
+            var startupResult = await Task.WhenAny(
+                ready.Task,
+                session.OutputCompleted,
+                Task.Delay(TimeSpan.FromSeconds(5)));
+            if (startupResult == session.OutputCompleted)
+            {
+                await session.OutputCompleted;
+                throw new InvalidOperationException("ConPTY 输出在 ready 行之前结束");
+            }
+
+            Assert(startupResult == ready.Task, "ConPTY 没有捕获 Node.js ready 输出");
+            await session.SendCtrlCAsync();
+            await session.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            await graceful.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Equal(0, session.Process.ExitCode, "Ctrl+C 应进入 Node.js SIGINT 处理器并正常退出");
+        }
+        finally
+        {
+            if (!session.Process.HasExited)
+            {
+                try { session.Process.Kill(entireProcessTree: true); } catch { /* 测试清理 */ }
+            }
+        }
+    }
+
+    private static Task TestConPtyArgumentQuoting()
+    {
+        Equal("plain", ConPtyProcess.QuoteArgument("plain"), "普通参数不应增加引号");
+        Equal("\"two words\"", ConPtyProcess.QuoteArgument("two words"), "空格参数应加引号");
+        Equal("\"\"", ConPtyProcess.QuoteArgument(string.Empty), "空参数应保留");
+        Equal("\"a\\\\\\\"b\"", ConPtyProcess.QuoteArgument("a\\\"b"), "反斜杠和引号应按 Windows 规则转义");
+        Equal("\"path with space\\\\\"", ConPtyProcess.QuoteArgument("path with space\\"), "结尾反斜杠应在引号内加倍");
+        return Task.CompletedTask;
     }
 
     private static async Task TestSelfExitingProcessNotForceKilled()
