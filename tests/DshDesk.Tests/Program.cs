@@ -24,6 +24,7 @@ internal static class Program
             ("默认目录不再使用 G 盘", TestDefaultPaths),
             ("解析 DSH 页面主题", TestThemeMessageParser),
             ("计算窗口最大化工作区", TestWindowMaximizeBounds),
+            ("计算最大化窗口拖动还原位置", TestWindowDragRestorePosition),
             ("验证官方 DSH 包目录", TestPackageValidation),
             ("拒绝损坏或越界的 DSH 包", TestInvalidPackages),
             ("PATH 中的 DSH 按顺序优先", TestPathDiscoveryPrecedence),
@@ -281,6 +282,37 @@ internal static class Program
             "应能通过 Windows API 获取当前工作区");
         Assert(actualWorkArea.Width > 0 && actualWorkArea.Height > 0,
             "Windows API 返回的工作区尺寸应有效");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestWindowDragRestorePosition()
+    {
+        // 100% DPI：光标在屏幕 (1000, 200)，标题栏宽 1280，抓取点 (100, 12)，
+        // 正常窗口宽 1200。还原后应水平按抓取比例、垂直按抓取偏移锚定光标。
+        var at100 = WindowDragRestore.CalculateRestorePosition(
+            cursorScreenX: 1000,
+            cursorScreenY: 200,
+            pointerOffsetX: 100,
+            pointerOffsetY: 12,
+            titleBarWidth: 1280,
+            normalWindowWidth: 1200,
+            dpiScaleX: 1.0,
+            dpiScaleY: 1.0);
+        Equal(1000 - (100.0 / 1280.0) * 1200.0, at100.Left, "还原后 Left 未按水平抓取比例锚定");
+        Equal(188.0, at100.Top, "还原后 Top 未按垂直抓取偏移锚定");
+
+        // 150% DPI：像素坐标需折算回 DIP，垂直偏移也要乘以缩放。
+        var at150 = WindowDragRestore.CalculateRestorePosition(
+            cursorScreenX: 1500,
+            cursorScreenY: 300,
+            pointerOffsetX: 100,
+            pointerOffsetY: 12,
+            titleBarWidth: 1280,
+            normalWindowWidth: 1200,
+            dpiScaleX: 1.5,
+            dpiScaleY: 1.5);
+        Equal((1500 - (100.0 / 1280.0) * 1200.0) / 1.5, at150.Left, "高 DPI 下 Left 换算错误");
+        Equal((300 - 12.0 * 1.5) / 1.5, at150.Top, "高 DPI 下 Top 换算错误");
         return Task.CompletedTask;
     }
 

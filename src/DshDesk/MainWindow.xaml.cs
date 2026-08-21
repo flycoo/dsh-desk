@@ -107,6 +107,8 @@ public partial class MainWindow : Window
     private bool _hasPageTheme;
     private string _draftDshPackageDirectory = string.Empty;
     private string _draftWorkspaceDirectory = string.Empty;
+    private bool _pendingRestoreDrag;
+    private System.Windows.Point _restoreDragOffset;
 
     public MainWindow(
         DshSettings settings,
@@ -450,14 +452,79 @@ public partial class MainWindow : Window
     {
         if (e.ClickCount == 2)
         {
+            CancelRestoreDrag();
             ToggleMaximize();
             return;
         }
 
-        if (e.ButtonState == MouseButtonState.Pressed)
+        if (e.ButtonState != MouseButtonState.Pressed)
         {
-            DragMove();
+            return;
         }
+
+        if (WindowState == WindowState.Maximized)
+        {
+            // Delay the restore until the pointer actually moves, so a plain
+            // click on the maximized caption does not restore the window.
+            _pendingRestoreDrag = true;
+            _restoreDragOffset = e.GetPosition(TitleBar);
+            TitleBar.CaptureMouse();
+            return;
+        }
+
+        DragMove();
+    }
+
+    private void TitleBar_OnMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_pendingRestoreDrag)
+        {
+            return;
+        }
+
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            CancelRestoreDrag();
+            return;
+        }
+
+        var current = e.GetPosition(TitleBar);
+        var movedHorizontally = Math.Abs(current.X - _restoreDragOffset.X) >= SystemParameters.MinimumHorizontalDragDistance;
+        var movedVertically = Math.Abs(current.Y - _restoreDragOffset.Y) >= SystemParameters.MinimumVerticalDragDistance;
+        if (!movedHorizontally && !movedVertically)
+        {
+            return;
+        }
+
+        _pendingRestoreDrag = false;
+        TitleBar.ReleaseMouseCapture();
+        RestoreAndDrag(_restoreDragOffset);
+    }
+
+    private void TitleBar_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => CancelRestoreDrag();
+
+    private void CancelRestoreDrag()
+    {
+        if (!_pendingRestoreDrag)
+        {
+            return;
+        }
+
+        _pendingRestoreDrag = false;
+        TitleBar.ReleaseMouseCapture();
+    }
+
+    private void RestoreAndDrag(System.Windows.Point pointerOffset)
+    {
+        if (!WindowDragRestore.TryGetRestorePosition(this, TitleBar, pointerOffset, out var position))
+        {
+            return;
+        }
+
+        WindowState = WindowState.Normal;
+        Left = position.Left;
+        Top = position.Top;
+        DragMove();
     }
 
     private void StatusButton_OnClick(object sender, RoutedEventArgs e) => StatusPopup.IsOpen = !StatusPopup.IsOpen;

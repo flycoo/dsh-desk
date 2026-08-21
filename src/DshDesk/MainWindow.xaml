@@ -258,7 +258,9 @@
             DockPanel.Dock="Top"
             Height="42"
             Background="{DynamicResource ChromeBackground}"
-            MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
+            MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown"
+            MouseMove="TitleBar_OnMouseMove"
+            MouseLeftButtonUp="TitleBar_OnMouseLeftButtonUp">
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="*" />
           <ColumnDefinition Width="Auto" />
