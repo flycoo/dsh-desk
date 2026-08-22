@@ -11,7 +11,7 @@
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         ResizeMode="CanResize"
-        Icon="Assets/app-icon-v3.ico"
+        Icon="Assets/app-icon.ico"
         Background="{DynamicResource WindowBackground}"
         Foreground="{DynamicResource TextPrimary}">
   <shell:WindowChrome.WindowChrome>
@@ -266,7 +266,7 @@
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-          <Image Width="25" Height="25" Source="Assets/app-icon-v3.png" RenderOptions.BitmapScalingMode="HighQuality" />
+          <Image Width="25" Height="25" Source="Assets/app-icon.png" RenderOptions.BitmapScalingMode="HighQuality" />
           <TextBlock Text="DSH Desk" Margin="9,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
         </StackPanel>
 
@@ -386,7 +386,7 @@
                   BorderThickness="1"
                   CornerRadius="14">
             <StackPanel>
-              <Image Width="64" Height="64" Source="Assets/app-icon-v3.png" RenderOptions.BitmapScalingMode="HighQuality" HorizontalAlignment="Center" />
+              <Image Width="64" Height="64" Source="Assets/app-icon.png" RenderOptions.BitmapScalingMode="HighQuality" HorizontalAlignment="Center" />
               <TextBlock x:Name="StartupTitle"
                          Text="正在启动 DeepSeek Harness"
                          Margin="0,20,0,7"

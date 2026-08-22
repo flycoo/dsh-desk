@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -517,7 +518,7 @@ public partial class MainWindow : Window
         menu.Items.Add("彻底退出", null, (_, _) => Dispatcher.InvokeAsync(ExitApplicationAsync));
 
         var executableIcon = Environment.ProcessPath is { } executablePath
-            ? System.Drawing.Icon.ExtractAssociatedIcon(executablePath)
+            ? LoadTrayIcon(executablePath)
             : null;
         var tray = new Forms.NotifyIcon
         {
@@ -529,6 +530,35 @@ public partial class MainWindow : Window
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(RestoreFromTray);
         return tray;
     }
+
+    private static System.Drawing.Icon? LoadTrayIcon(string executablePath)
+    {
+        if (ExtractIconEx(executablePath, 0, out _, out var smallHandle, 1) == 0 || smallHandle == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            return (System.Drawing.Icon)System.Drawing.Icon.FromHandle(smallHandle).Clone();
+        }
+        finally
+        {
+            DestroyIcon(smallHandle);
+        }
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint ExtractIconEx(
+        string file,
+        int iconIndex,
+        out IntPtr largeIcon,
+        out IntPtr smallIcon,
+        uint icons);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyIcon(IntPtr iconHandle);
 
     private void MainWindow_OnClosing(object? sender, CancelEventArgs e)
     {
