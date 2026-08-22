@@ -18,13 +18,18 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        var startInBackground = e.Args.Any(argument =>
+            string.Equals(argument, "--background", StringComparison.OrdinalIgnoreCase));
         _singleInstanceMutex = new Mutex(true, MutexName, out _ownsSingleInstanceMutex);
         if (!_ownsSingleInstanceMutex)
         {
             try
             {
-                using var existingEvent = EventWaitHandle.OpenExisting(ActivateEventName);
-                existingEvent.Set();
+                if (!startInBackground)
+                {
+                    using var existingEvent = EventWaitHandle.OpenExisting(ActivateEventName);
+                    existingEvent.Set();
+                }
             }
             catch
             {
@@ -44,9 +49,16 @@ public partial class App : System.Windows.Application
         var log = new LogService();
         _processManager = new DshProcessManager(settings, log);
 
-        var window = new MainWindow(settings, settingsStore, log, _processManager);
+        var window = new MainWindow(settings, settingsStore, log, _processManager, startInBackground);
         MainWindow = window;
-        window.Show();
+        if (startInBackground)
+        {
+            window.ShowInBackground();
+        }
+        else
+        {
+            window.Show();
+        }
 
         _activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName);
         _activationCancellation = new CancellationTokenSource();

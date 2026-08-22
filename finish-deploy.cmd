@@ -18,8 +18,6 @@ if not exist "%SRC%\DshDesk.dll" (
   goto :end
 )
 
-for %%F in ("%SRC%\DshDesk.dll") do set "SRCDLLSIZE=%%~zF"
-
 tasklist /FI "IMAGENAME eq DshDesk.exe" 2>nul | find /I "DshDesk.exe" >nul
 if %ERRORLEVEL% EQU 0 (
   echo [ERROR] DSH Desk is still running and locks the exe/dll.
@@ -40,13 +38,24 @@ if not exist "%DST%\DshDesk.dll" (
   goto :end
 )
 
+for /f "skip=1 delims=" %%H in ('certutil -hashfile "%SRC%\DshDesk.dll" SHA256') do if not defined SRCDLLHASH set "SRCDLLHASH=%%H"
+for /f "skip=1 delims=" %%H in ('certutil -hashfile "%DST%\DshDesk.dll" SHA256') do if not defined DSTDLLHASH set "DSTDLLHASH=%%H"
 for %%F in ("%DST%\DshDesk.dll") do set "DSTDLLSIZE=%%~zF"
-if not "%SRCDLLSIZE%"=="%DSTDLLSIZE%" (
-  echo [ERROR] DshDesk.dll size mismatch: source %SRCDLLSIZE% bytes, destination %DSTDLLSIZE% bytes.
+
+if not defined SRCDLLHASH (
+  echo [ERROR] Could not hash source DLL: %SRC%\DshDesk.dll
+  goto :end
+)
+if not defined DSTDLLHASH (
+  echo [ERROR] Could not hash deployed DLL: %DST%\DshDesk.dll
+  goto :end
+)
+if /i not "%SRCDLLHASH%"=="%DSTDLLHASH%" (
+  echo [ERROR] DshDesk.dll hash mismatch: source %SRCDLLHASH%, destination %DSTDLLHASH%.
   goto :end
 )
 
-echo [OK] Deployment finished. DshDesk.dll: %DSTDLLSIZE% bytes.
+echo [OK] Deployment finished. DshDesk.dll: %DSTDLLSIZE% bytes, SHA-256 %DSTDLLHASH%.
 echo      Then start DshDesk.exe - expected: http://127.0.0.1:3080
 
 :end

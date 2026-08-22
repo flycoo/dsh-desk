@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Net;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using DshDesk.Models;
 using DshDesk.Services;
 using Microsoft.Web.WebView2.Core;
@@ -13,6 +15,7 @@ namespace DshDesk;
 public partial class MainWindow : Window
 {
     private const string InstallCommand = "npm install --global @deepseek-ai/dsh";
+    private const string DshUpdateCommand = "npm install --global @deepseek-ai/dsh@latest";
 
     private const string DshThemeBridgeScript = """
         (() => {
@@ -97,6 +100,8 @@ public partial class MainWindow : Window
     private readonly SettingsStore _settingsStore;
     private readonly LogService _log;
     private readonly DshProcessManager _processManager;
+    private readonly UpdateCheckService _updateCheckService;
+    private readonly DispatcherTimer _updateCheckTimer;
     private readonly Forms.NotifyIcon _trayIcon;
     private readonly WindowWorkAreaMaximizer _windowWorkAreaMaximizer;
     private Uri? _allowedOrigin;
@@ -106,6 +111,12 @@ public partial class MainWindow : Window
     private bool _settingsInitialized;
     private bool _hasPageTheme;
     private bool _dshOperationInProgress;
+    private bool _updateCheckInProgress;
+    private bool _updateNotificationShown;
+    private bool _updatingStartupRegistration;
+    private Forms.ToolStripMenuItem? _trayCopyAddressItem;
+    private Forms.ToolStripMenuItem? _trayOpenInBrowserItem;
+    private UpdateCheckResult? _lastUpdateCheck;
     private string _draftDshPackageDirectory = string.Empty;
     private string _draftWorkspaceDirectory = string.Empty;
     private bool _pendingRestoreDrag;
@@ -115,29 +126,59 @@ public partial class MainWindow : Window
         DshSettings settings,
         SettingsStore settingsStore,
         LogService log,
-        DshProcessManager processManager)
+        DshProcessManager processManager,
+        bool startInBackground = false)
     {
         _settings = settings;
         _settingsStore = settingsStore;
         _log = log;
         _processManager = processManager;
+        _updateCheckService = new UpdateCheckService();
+        _updateCheckTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = UpdateCheckService.CheckInterval
+        };
+        _updateCheckTimer.Tick += UpdateCheckTimer_OnTick;
 
         InitializeComponent();
         _windowWorkAreaMaximizer = new WindowWorkAreaMaximizer(this);
+        SourceInitialized += (_, _) => WindowPlacementService.Restore(this, settings.WindowPlacement);
         CloseToTrayCheckBox.IsChecked = settings.CloseToTray;
+        LaunchAtLoginCheckBox.IsChecked = StartupRegistrationService.IsEnabledForCurrentExecutable();
         _settingsInitialized = true;
         _processManager.StateChanged += ProcessManager_OnStateChanged;
         _trayIcon = CreateTrayIcon();
 
-        Loaded += async (_, _) => await StartDshAsync();
+        Loaded += async (_, _) =>
+        {
+            StartUpdateCheckSchedule();
+            await StartDshAsync(
+                attachExistingOverride: startInBackground ? true : null,
+                navigate: !startInBackground);
+        };
         Closing += MainWindow_OnClosing;
         Closed += (_, _) =>
         {
             _windowWorkAreaMaximizer.Dispose();
+            _updateCheckTimer.Stop();
+            _updateCheckTimer.Tick -= UpdateCheckTimer_OnTick;
+            _updateCheckService.Dispose();
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
             _processManager.StateChanged -= ProcessManager_OnStateChanged;
         };
+    }
+
+    public void ShowInBackground()
+    {
+        ShowActivated = false;
+        ShowInTaskbar = false;
+        Opacity = 0;
+        Show();
+        Hide();
+        Opacity = 1;
+        ShowActivated = true;
+        ShowInTaskbar = true;
     }
 
     public void RestoreFromTray()
@@ -152,9 +193,13 @@ public partial class MainWindow : Window
         Topmost = true;
         Topmost = false;
         Focus();
+        _ = EnsureVisibleContentAsync();
     }
 
-    private async Task StartDshAsync(bool restart = false, bool? attachExistingOverride = null)
+    private async Task StartDshAsync(
+        bool restart = false,
+        bool? attachExistingOverride = null,
+        bool navigate = true)
     {
         if (_dshOperationInProgress)
         {
@@ -178,7 +223,7 @@ public partial class MainWindow : Window
                 attachExisting = decision.AttachExisting;
             }
 
-            var keepCurrentContent = restart &&
+            var keepCurrentContent = navigate && restart &&
                                      _webViewInitialized &&
                                      HarnessWebView.Visibility == Visibility.Visible &&
                                      LaunchOverlay.Visibility == Visibility.Collapsed;
@@ -190,13 +235,16 @@ public partial class MainWindow : Window
 
             try
             {
-                EnsureWebViewRuntimeAvailable();
                 var url = restart
                     ? await _processManager.RestartAsync(attachExisting)
                     : await _processManager.StartOrAttachAsync(attachExisting);
-                await NavigateToDshAsync(
-                    url,
-                    keepCurrentPageIfSame: keepCurrentContent && !wasOwnedProcess);
+                if (navigate || IsVisible)
+                {
+                    EnsureWebViewRuntimeAvailable();
+                    await NavigateToDshAsync(
+                        url,
+                        keepCurrentPageIfSame: keepCurrentContent && !wasOwnedProcess);
+                }
             }
             catch (Exception exception)
             {
@@ -208,6 +256,34 @@ public partial class MainWindow : Window
         {
             _dshOperationInProgress = false;
         }
+    }
+
+    private async Task EnsureVisibleContentAsync()
+    {
+        if (_webViewInitialized && HarnessWebView.Visibility == Visibility.Visible)
+        {
+            return;
+        }
+
+        if (_processManager.CurrentUrl is { } currentUrl &&
+            _processManager.State is DshRuntimeState.Ready or DshRuntimeState.Attached)
+        {
+            try
+            {
+                ShowStarting("正在打开 DeepSeek Harness", "正在加载本机服务页面…");
+                EnsureWebViewRuntimeAvailable();
+                await NavigateToDshAsync(currentUrl);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(exception, "Unable to initialize DSH page");
+                ShowFailure(exception);
+            }
+
+            return;
+        }
+
+        await StartDshAsync();
     }
 
     private ExistingDshChoice ShowExistingDshDialog()
@@ -371,6 +447,7 @@ public partial class MainWindow : Window
                     ? "来源：外部服务"
                     : string.Empty;
             _trayIcon.Text = StatusText.Text.Length <= 63 ? $"DSH Desk - {StatusText.Text}" : "DSH Desk";
+            UpdateAddressActions();
 
             if (e.State is DshRuntimeState.Checking or DshRuntimeState.Starting)
             {
@@ -419,6 +496,22 @@ public partial class MainWindow : Window
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("打开 DSH Desk", null, (_, _) => Dispatcher.Invoke(RestoreFromTray));
         menu.Items.Add("重新连接 / 重启 DSH", null, (_, _) => Dispatcher.InvokeAsync(async () => await StartDshAsync(true)));
+        _trayCopyAddressItem = new Forms.ToolStripMenuItem(
+            "复制本地地址",
+            null,
+            (_, _) => Dispatcher.Invoke(CopyCurrentAddress))
+        {
+            Enabled = false
+        };
+        _trayOpenInBrowserItem = new Forms.ToolStripMenuItem(
+            "在浏览器中打开",
+            null,
+            (_, _) => Dispatcher.Invoke(OpenCurrentAddressInBrowser))
+        {
+            Enabled = false
+        };
+        menu.Items.Add(_trayCopyAddressItem);
+        menu.Items.Add(_trayOpenInBrowserItem);
         menu.Items.Add("查看日志", null, (_, _) => Dispatcher.Invoke(OpenLogDirectory));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("彻底退出", null, (_, _) => Dispatcher.InvokeAsync(ExitApplicationAsync));
@@ -444,6 +537,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        SaveWindowPlacement();
         e.Cancel = true;
         if (_settings.CloseToTray)
         {
@@ -470,6 +564,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        SaveWindowPlacement();
         _isExiting = true;
         SettingsPopup.IsOpen = false;
         StatusPopup.IsOpen = false;
@@ -567,6 +662,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        _updatingStartupRegistration = true;
+        LaunchAtLoginCheckBox.IsChecked = StartupRegistrationService.IsEnabledForCurrentExecutable();
+        _updatingStartupRegistration = false;
         LoadSettingsDraft();
         SettingsPopup.IsOpen = true;
         await RefreshDetectedInstallationAsync();
@@ -587,6 +685,10 @@ public partial class MainWindow : Window
         StatusPopup.IsOpen = false;
         await StartDshAsync(true);
     }
+
+    private void CopyAddressButton_OnClick(object sender, RoutedEventArgs e) => CopyCurrentAddress();
+
+    private void OpenInBrowserButton_OnClick(object sender, RoutedEventArgs e) => OpenCurrentAddressInBrowser();
 
     private void OpenLogsButton_OnClick(object sender, RoutedEventArgs e) => OpenLogDirectory();
 
@@ -730,7 +832,9 @@ public partial class MainWindow : Window
             WorkspaceDirectory = Path.GetFullPath(workspaceDirectory),
             CloseToTray = _settings.CloseToTray,
             AttachPort = _settings.AttachPort,
-            StartupTimeoutSeconds = _settings.StartupTimeoutSeconds
+            StartupTimeoutSeconds = _settings.StartupTimeoutSeconds,
+            WindowPlacement = _settings.WindowPlacement,
+            LastUpdateCheckUtc = _settings.LastUpdateCheckUtc
         };
         try
         {
@@ -824,6 +928,253 @@ public partial class MainWindow : Window
             _log.Error(exception, "Unable to save settings");
         }
     }
+
+    private void LaunchAtLoginCheckBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (!_settingsInitialized || _updatingStartupRegistration)
+        {
+            return;
+        }
+
+        var enabled = LaunchAtLoginCheckBox.IsChecked == true;
+        try
+        {
+            StartupRegistrationService.SetEnabled(enabled);
+        }
+        catch (Exception exception)
+        {
+            _log.Error(exception, "Unable to update Windows startup registration");
+            _updatingStartupRegistration = true;
+            LaunchAtLoginCheckBox.IsChecked = !enabled;
+            _updatingStartupRegistration = false;
+            System.Windows.MessageBox.Show(
+                exception.Message,
+                "无法修改开机启动",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private async void CheckUpdatesButton_OnClick(object sender, RoutedEventArgs e) =>
+        await CheckForUpdatesAsync(showNotification: false);
+
+    private void OpenDeskReleaseButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        var url = _lastUpdateCheck?.DshDesk.MoreInfoUrl ?? UpdateCheckService.DeskReleasesUrl;
+        OpenExternalUrl(url);
+    }
+
+    private void CopyDshUpdateCommandButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        CopyTextWithFallback(DshUpdateCommand, "DSH 更新命令");
+    }
+
+    private void SaveWindowPlacement()
+    {
+        var placement = WindowPlacementService.Capture(this);
+        if (placement is null)
+        {
+            return;
+        }
+
+        _settings.WindowPlacement = placement;
+        try
+        {
+            _settingsStore.Save(_settings);
+        }
+        catch (Exception exception)
+        {
+            _log.Error(exception, "Unable to save window placement");
+        }
+    }
+
+    private void UpdateAddressActions()
+    {
+        var enabled = TryGetCurrentAddress(out _);
+        CopyAddressButton.IsEnabled = enabled;
+        OpenInBrowserButton.IsEnabled = enabled;
+        if (_trayCopyAddressItem is not null) _trayCopyAddressItem.Enabled = enabled;
+        if (_trayOpenInBrowserItem is not null) _trayOpenInBrowserItem.Enabled = enabled;
+    }
+
+    private bool TryGetCurrentAddress(out Uri? url)
+    {
+        url = _processManager.CurrentUrl;
+        return _processManager.State is DshRuntimeState.Ready or DshRuntimeState.Attached &&
+               url is not null &&
+               url.Scheme == Uri.UriSchemeHttp &&
+               IPAddress.TryParse(url.Host, out var address) &&
+               IPAddress.IsLoopback(address);
+    }
+
+    private void CopyCurrentAddress()
+    {
+        if (!TryGetCurrentAddress(out var url))
+        {
+            return;
+        }
+
+        CopyTextWithFallback(url!.AbsoluteUri, "DSH 本地地址");
+    }
+
+    private void OpenCurrentAddressInBrowser()
+    {
+        if (TryGetCurrentAddress(out var url))
+        {
+            OpenExternalUrl(url!);
+        }
+    }
+
+    private void CopyTextWithFallback(string text, string title)
+    {
+        try
+        {
+            System.Windows.Clipboard.SetText(text);
+        }
+        catch (Exception exception)
+        {
+            _log.Error(exception, $"Unable to copy {title}");
+            System.Windows.MessageBox.Show(
+                text,
+                $"请手动复制{title}",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+    }
+
+    private void StartUpdateCheckSchedule()
+    {
+        var delay = UpdateCheckService.CalculateNextCheckDelay(
+            _settings.LastUpdateCheckUtc,
+            DateTimeOffset.UtcNow);
+        if (delay == TimeSpan.Zero)
+        {
+            _ = CheckForUpdatesAsync(showNotification: true);
+            return;
+        }
+
+        ScheduleNextUpdateCheck(delay);
+        var lastLocal = _settings.LastUpdateCheckUtc!.Value.ToLocalTime();
+        DeskUpdateText.Text = $"DSH Desk：上次检查 {lastLocal:MM-dd HH:mm}";
+        DshUpdateText.Text = $"系统 DSH：将在约 {FormatDelay(delay)}后自动检查";
+    }
+
+    private void ScheduleNextUpdateCheck(TimeSpan delay)
+    {
+        _updateCheckTimer.Stop();
+        _updateCheckTimer.Interval = delay <= TimeSpan.Zero
+            ? TimeSpan.FromSeconds(1)
+            : delay;
+        _updateCheckTimer.Start();
+    }
+
+    private async void UpdateCheckTimer_OnTick(object? sender, EventArgs e)
+    {
+        _updateCheckTimer.Stop();
+        await CheckForUpdatesAsync(showNotification: true);
+    }
+
+    private static string FormatDelay(TimeSpan delay)
+    {
+        if (delay.TotalHours >= 1)
+        {
+            return $"{Math.Ceiling(delay.TotalHours):0} 小时";
+        }
+
+        return $"{Math.Max(1, Math.Ceiling(delay.TotalMinutes)):0} 分钟";
+    }
+
+    private async Task CheckForUpdatesAsync(bool showNotification)
+    {
+        if (_updateCheckInProgress)
+        {
+            return;
+        }
+
+        _updateCheckInProgress = true;
+        _updateCheckTimer.Stop();
+        CheckUpdatesButton.IsEnabled = false;
+        DeskUpdateText.Text = $"DSH Desk：当前 {UpdateCheckService.CurrentDeskVersion}，正在检查…";
+        DshUpdateText.Text = "系统 DSH：正在检查…";
+        try
+        {
+            var systemInstallation = await Task.Run(() => DshPackageLocator.FindSystemInstallation());
+            var result = await _updateCheckService.CheckAsync(systemInstallation?.Version);
+            _lastUpdateCheck = result;
+
+            DeskUpdateText.Text = FormatUpdateStatus("DSH Desk", result.DshDesk);
+            DshUpdateText.Text = FormatUpdateStatus("系统 DSH", result.SystemDsh);
+            OpenDeskReleaseButton.Visibility = result.DshDesk.Availability == UpdateAvailability.Available
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            CopyDshUpdateCommandButton.Visibility = result.SystemDsh.Availability == UpdateAvailability.Available
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            UpdateBadge.Visibility = result.HasUpdate ? Visibility.Visible : Visibility.Collapsed;
+
+            if (showNotification && result.HasUpdate && !_updateNotificationShown)
+            {
+                var products = new List<string>();
+                if (result.DshDesk.Availability == UpdateAvailability.Available) products.Add("DSH Desk");
+                if (result.SystemDsh.Availability == UpdateAvailability.Available) products.Add("系统 DSH");
+                _trayIcon.ShowBalloonTip(
+                    3500,
+                    "发现新版本",
+                    $"{string.Join("、", products)} 有可用更新。打开 DSH Desk 设置查看详情。",
+                    Forms.ToolTipIcon.Info);
+                _updateNotificationShown = true;
+            }
+
+            if (result.DshDesk.Availability == UpdateAvailability.Failed)
+            {
+                _log.Info($"DSH Desk update check failed: {result.DshDesk.Error}");
+            }
+            if (result.SystemDsh.Availability == UpdateAvailability.Failed)
+            {
+                _log.Info($"System DSH update check failed: {result.SystemDsh.Error}");
+            }
+        }
+        catch (Exception exception)
+        {
+            _log.Error(exception, "Unable to check for updates");
+            DeskUpdateText.Text = $"DSH Desk：当前 {UpdateCheckService.CurrentDeskVersion}，检查失败";
+            DshUpdateText.Text = "系统 DSH：检查失败";
+        }
+        finally
+        {
+            _settings.LastUpdateCheckUtc = DateTimeOffset.UtcNow;
+            try
+            {
+                _settingsStore.Save(_settings);
+            }
+            catch (Exception exception)
+            {
+                _log.Error(exception, "Unable to save update check time");
+            }
+
+            _updateCheckInProgress = false;
+            CheckUpdatesButton.IsEnabled = true;
+            if (!_isExiting)
+            {
+                ScheduleNextUpdateCheck(UpdateCheckService.CheckInterval);
+            }
+        }
+    }
+
+    private static string FormatUpdateStatus(string productName, ProductUpdateStatus status) =>
+        status.Availability switch
+        {
+            UpdateAvailability.Available =>
+                $"{productName}：{status.CurrentVersion} → {status.LatestVersion}，有新版本",
+            UpdateAvailability.Current when string.Equals(status.CurrentVersion, status.LatestVersion, StringComparison.OrdinalIgnoreCase) =>
+                $"{productName}：{status.CurrentVersion}，已是最新版本",
+            UpdateAvailability.Current =>
+                $"{productName}：当前 {status.CurrentVersion}，latest 为 {status.LatestVersion}，无需更新",
+            UpdateAvailability.Unavailable =>
+                $"{productName}：未检测到系统安装",
+            _ =>
+                $"{productName}：当前 {status.CurrentVersion}，检查失败"
+        };
 
     private async void ExitButton_OnClick(object sender, RoutedEventArgs e) => await ExitApplicationAsync();
 }

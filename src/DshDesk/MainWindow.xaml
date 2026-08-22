@@ -11,7 +11,7 @@
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         ResizeMode="CanResize"
-        Icon="Assets/app-icon.ico"
+        Icon="Assets/app-icon-v3.ico"
         Background="{DynamicResource WindowBackground}"
         Foreground="{DynamicResource TextPrimary}">
   <shell:WindowChrome.WindowChrome>
@@ -266,7 +266,7 @@
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0,0,0">
-          <Image Width="25" Height="25" Source="Assets/app-icon.png" RenderOptions.BitmapScalingMode="HighQuality" />
+          <Image Width="25" Height="25" Source="Assets/app-icon-v3.png" RenderOptions.BitmapScalingMode="HighQuality" />
           <TextBlock Text="DSH Desk" Margin="9,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
         </StackPanel>
 
@@ -279,8 +279,21 @@
               <TextBlock x:Name="StatusText" Text="正在启动" VerticalAlignment="Center" />
             </StackPanel>
           </Button>
-          <Button Style="{StaticResource TitleButton}" ToolTip="DSH Desk 设置" Click="SettingsButton_OnClick">
-            <TextBlock Text="⚙" FontSize="16" />
+          <Button x:Name="SettingsButton"
+                  Style="{StaticResource TitleButton}"
+                  ToolTip="DSH Desk 设置"
+                  Click="SettingsButton_OnClick">
+            <Grid>
+              <TextBlock Text="⚙" FontSize="16" />
+              <Ellipse x:Name="UpdateBadge"
+                       Width="7"
+                       Height="7"
+                       Margin="18,-3,0,0"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Top"
+                       Fill="#E09B3D"
+                       Visibility="Collapsed" />
+            </Grid>
           </Button>
           <Button Style="{StaticResource TitleButton}" ToolTip="最小化" Click="MinimizeButton_OnClick">
             <TextBlock Text="─" />
@@ -373,7 +386,7 @@
                   BorderThickness="1"
                   CornerRadius="14">
             <StackPanel>
-              <Image Width="64" Height="64" Source="Assets/app-icon.png" RenderOptions.BitmapScalingMode="HighQuality" HorizontalAlignment="Center" />
+              <Image Width="64" Height="64" Source="Assets/app-icon-v3.png" RenderOptions.BitmapScalingMode="HighQuality" HorizontalAlignment="Center" />
               <TextBlock x:Name="StartupTitle"
                          Text="正在启动 DeepSeek Harness"
                          Margin="0,20,0,7"
@@ -453,6 +466,16 @@
             <TextBlock x:Name="PopupAddressText" Margin="0,7,0,0" Foreground="{DynamicResource TextSecondary}" />
             <TextBlock x:Name="PopupVersionText" Margin="0,4,0,10" Foreground="{DynamicResource TextSecondary}" />
             <Button Style="{StaticResource MenuButton}" Content="重新连接 / 重启 DSH" Click="RestartButton_OnClick" />
+            <Button x:Name="CopyAddressButton"
+                    Style="{StaticResource MenuButton}"
+                    Content="复制本地地址"
+                    IsEnabled="False"
+                    Click="CopyAddressButton_OnClick" />
+            <Button x:Name="OpenInBrowserButton"
+                    Style="{StaticResource MenuButton}"
+                    Content="在浏览器中打开"
+                    IsEnabled="False"
+                    Click="OpenInBrowserButton_OnClick" />
             <Button Style="{StaticResource MenuButton}" Content="查看启动日志" Click="OpenLogsButton_OnClick" />
           </StackPanel>
         </Border>
@@ -526,6 +549,58 @@
                            FontSize="14"
                            Foreground="{DynamicResource TextPrimary}" />
               </StackPanel>
+              <StackPanel Orientation="Horizontal" Margin="6,0,6,10">
+                <CheckBox x:Name="LaunchAtLoginCheckBox"
+                          VerticalAlignment="Center"
+                          Margin="0,0,8,0"
+                          Checked="LaunchAtLoginCheckBox_OnChanged"
+                          Unchecked="LaunchAtLoginCheckBox_OnChanged" />
+                <StackPanel>
+                  <TextBlock Text="登录 Windows 后启动"
+                             FontSize="14"
+                             Foreground="{DynamicResource TextPrimary}" />
+                  <TextBlock Text="静默启动到系统托盘"
+                             Margin="0,2,0,0"
+                             FontSize="12"
+                             Foreground="{DynamicResource TextSecondary}" />
+                </StackPanel>
+              </StackPanel>
+
+              <Separator Margin="0,6" Background="{DynamicResource AppBorderBrush}" />
+              <TextBlock Text="更新" FontWeight="SemiBold" Margin="4,8,0,8" />
+              <Border Margin="4,0,4,4"
+                      Padding="10"
+                      Background="{DynamicResource SurfaceBackground}"
+                      BorderBrush="{DynamicResource AppBorderBrush}"
+                      BorderThickness="1"
+                      CornerRadius="5">
+                <StackPanel>
+                  <TextBlock x:Name="DeskUpdateText"
+                             Text="DSH Desk：尚未检查"
+                             Foreground="{DynamicResource TextSecondary}"
+                             TextWrapping="Wrap" />
+                  <TextBlock x:Name="DshUpdateText"
+                             Text="系统 DSH：尚未检查"
+                             Margin="0,6,0,0"
+                             Foreground="{DynamicResource TextSecondary}"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+              <Button x:Name="CheckUpdatesButton"
+                      Style="{StaticResource MenuButton}"
+                      Content="检查更新"
+                      Click="CheckUpdatesButton_OnClick" />
+              <Button x:Name="OpenDeskReleaseButton"
+                      Style="{StaticResource MenuButton}"
+                      Content="打开 DSH Desk Release"
+                      Visibility="Collapsed"
+                      Click="OpenDeskReleaseButton_OnClick" />
+              <Button x:Name="CopyDshUpdateCommandButton"
+                      Style="{StaticResource MenuButton}"
+                      Content="复制 DSH 更新命令"
+                      Visibility="Collapsed"
+                      Click="CopyDshUpdateCommandButton_OnClick" />
+
               <Button Style="{StaticResource MenuButton}" Content="打开数据目录" Click="OpenDataButton_OnClick" />
               <Button Style="{StaticResource MenuButton}" Content="打开日志目录" Click="OpenLogsButton_OnClick" />
               <Separator Margin="0,8" Background="{DynamicResource AppBorderBrush}" />

@@ -50,3 +50,10 @@ DSH Desk 自身数据保存在：
 DSH Desk 不覆盖 `DSH_HOME` 或 `npm_config_cache`，因此 DSH 会继承用户现有环境；未设置 `DSH_HOME` 时使用官方默认目录。DSH Web 的默认 workspace 是 `%USERPROFILE%`，可在设置中选择其他已经存在的目录。
 
 DSH Desk 只加载 `127.0.0.1` 上实际启动或探测到的 DeepSeek Harness 页面。外部链接会交给系统默认浏览器。
+
+## 桌面集成
+
+- 记住窗口位置、尺寸和最大化状态；显示器布局变化后会把窗口校正到可见工作区。
+- 可在设置中启用“登录 Windows 后启动”，启动项使用 `--background` 静默进入系统托盘。
+- 服务就绪后可从状态弹层或托盘复制本地地址，或在系统默认浏览器中打开。
+- 每 24 小时只读检查一次 DSH Desk 的 GitHub Release 和系统安装 DSH 的 npm `latest` 版本；上次检查时间会持久化，重启后继续等待剩余周期，手动检查会重新计时。当前 DSH Desk 仓库为私有仓库，匿名 API 不可用时会回退到本机已登录的 GitHub CLI；未安装或未登录时仅显示检查失败。发现更新时只提供 Release 链接或复制 npm 更新命令，不会自动下载或安装。

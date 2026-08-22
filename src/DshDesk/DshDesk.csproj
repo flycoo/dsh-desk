@@ -8,8 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>DshDesk</AssemblyName>
     <RootNamespace>DshDesk</RootNamespace>
+    <Version>0.1.6</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\app-icon-v3.ico</ApplicationIcon>
     <Platforms>x64</Platforms>
     <PublishTrimmed>false</PublishTrimmed>
     <PublishSingleFile>false</PublishSingleFile>
@@ -24,7 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\app-icon.png" />
-    <Resource Include="Assets\app-icon.ico" />
+    <Resource Include="Assets\app-icon-v3.png" />
+    <Resource Include="Assets\app-icon-v3.ico" />
   </ItemGroup>
 </Project>

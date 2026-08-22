@@ -21,6 +21,11 @@ internal static class Program
             ("限制 WebView2 导航来源", TestNavigationPolicy),
             ("读写新版设置", TestSettingsRoundTrip),
             ("配置文件缺失端口时默认 3080", TestSettingsMissingPortDefaultsTo3080),
+            ("比较语义化版本与预发布版本", TestSemanticVersionComparison),
+            ("解析更新源响应", TestUpdateResponseParsing),
+            ("计算 24 小时更新检查周期", TestUpdateCheckSchedule),
+            ("校正离屏窗口位置", TestWindowPlacementNormalization),
+            ("构造 Windows 登录启动命令", TestStartupRegistrationCommand),
             ("默认目录不再使用 G 盘", TestDefaultPaths),
             ("解析 DSH 页面主题", TestThemeMessageParser),
             ("计算窗口最大化工作区", TestWindowMaximizeBounds),
@@ -95,7 +100,16 @@ internal static class Program
                 WorkspaceDirectory = directory,
                 CloseToTray = false,
                 AttachPort = 4099,
-                StartupTimeoutSeconds = 45
+                StartupTimeoutSeconds = 45,
+                LastUpdateCheckUtc = new DateTimeOffset(2026, 8, 21, 8, 30, 0, TimeSpan.Zero),
+                WindowPlacement = new WindowPlacementSettings
+                {
+                    Left = 100,
+                    Top = 120,
+                    Right = 1380,
+                    Bottom = 940,
+                    Maximized = true
+                }
             };
             store.Save(settings);
             var loaded = store.Load();
@@ -104,7 +118,81 @@ internal static class Program
             Equal(settings.WorkspaceDirectory, loaded.WorkspaceDirectory, "Workspace 未保存");
             Equal(settings.AttachPort, loaded.AttachPort, "端口未保存");
             Equal(settings.CloseToTray, loaded.CloseToTray, "托盘设置未保存");
+            Equal(100, loaded.WindowPlacement?.Left, "窗口位置未保存");
+            Equal(true, loaded.WindowPlacement?.Maximized, "窗口最大化状态未保存");
+            Equal(settings.LastUpdateCheckUtc, loaded.LastUpdateCheckUtc, "更新检查时间未保存");
         });
+        return Task.CompletedTask;
+    }
+
+    private static Task TestSemanticVersionComparison()
+    {
+        Assert(SemanticVersion.IsNewer("0.1.0-rc.8", "0.1.0-rc.7"), "rc.8 应高于 rc.7");
+        Assert(SemanticVersion.IsNewer("0.1.0", "0.1.0-rc.8"), "正式版应高于预发布版");
+        Assert(SemanticVersion.IsNewer("v0.1.5", "0.1.4+local"), "应忽略 v 前缀和构建元数据");
+        Assert(!SemanticVersion.IsNewer("0.1.0-rc.7", "0.1.0-rc.8"), "不能提示降级");
+        Assert(!SemanticVersion.IsNewer("invalid", "0.1.0"), "无效版本不能触发更新");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestUpdateResponseParsing()
+    {
+        var desk = UpdateCheckService.ParseDeskResponse(
+            "0.1.4",
+            """{"tag_name":"v0.1.5","html_url":"https://github.com/flycoo/dsh-desk/releases/tag/v0.1.5"}""");
+        Equal(UpdateAvailability.Available, desk.Availability, "应识别 DSH Desk 新版本");
+        Equal("0.1.5", desk.LatestVersion, "Release tag 解析错误");
+
+        var dsh = UpdateCheckService.ParseDshResponse("0.1.0-rc.8", """{"version":"0.1.0-rc.7"}""");
+        Equal(UpdateAvailability.Current, dsh.Availability, "latest 较旧时不应提示更新");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestUpdateCheckSchedule()
+    {
+        var now = new DateTimeOffset(2026, 8, 21, 12, 0, 0, TimeSpan.Zero);
+        Equal(TimeSpan.Zero, UpdateCheckService.CalculateNextCheckDelay(null, now), "首次启动应立即检查");
+        Equal(
+            TimeSpan.FromHours(1),
+            UpdateCheckService.CalculateNextCheckDelay(now.AddHours(-23), now),
+            "重启后应等待剩余周期");
+        Equal(
+            TimeSpan.Zero,
+            UpdateCheckService.CalculateNextCheckDelay(now.AddHours(-25), now),
+            "超过 24 小时应立即检查");
+        Equal(
+            TimeSpan.FromHours(24),
+            UpdateCheckService.CalculateNextCheckDelay(now.AddHours(1), now),
+            "系统时间回拨时不应形成负延迟");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestWindowPlacementNormalization()
+    {
+        var saved = new WindowPlacementSettings
+        {
+            Left = 5000,
+            Top = 5000,
+            Right = 6280,
+            Bottom = 5820,
+            Maximized = true
+        };
+        var workArea = new System.Drawing.Rectangle(0, 0, 1920, 1040);
+        var normalized = WindowPlacementService.Normalize(saved, [workArea], workArea);
+        Equal(640, normalized.Left, "离屏窗口应移回主屏右侧边界内");
+        Equal(220, normalized.Top, "离屏窗口应移回主屏底部边界内");
+        Equal(1920, normalized.Right, "窗口右边界错误");
+        Equal(1040, normalized.Bottom, "窗口底边界错误");
+        Assert(normalized.Maximized, "应保留最大化状态");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestStartupRegistrationCommand()
+    {
+        Equal(
+            "\"C:\\Program Files\\DSH Desk\\DshDesk.exe\" --background",
+            StartupRegistrationService.BuildCommand(@"C:\Program Files\DSH Desk\DshDesk.exe"),
+            "启动项命令应正确引用程序路径");
         return Task.CompletedTask;
     }
 
