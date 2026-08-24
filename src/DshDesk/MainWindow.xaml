@@ -248,6 +248,131 @@
         </Setter.Value>
       </Setter>
     </Style>
+    <Style x:Key="ThemedScrollBarLineButton" TargetType="RepeatButton">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Setter Property="IsTabStop" Value="False" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RepeatButton">
+            <Border x:Name="LineButtonRoot"
+                    Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center"
+                                VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="LineButtonRoot"
+                        Property="Background"
+                        Value="{DynamicResource AppBorderBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="LineButtonRoot"
+                        Property="Background"
+                        Value="{DynamicResource AccentPressedBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="ThemedVerticalScrollBar" TargetType="ScrollBar">
+      <Setter Property="Width" Value="14" />
+      <Setter Property="Background" Value="{DynamicResource SurfaceBackground}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Grid Width="{TemplateBinding Width}"
+                  Background="{TemplateBinding Background}">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="14" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="14" />
+              </Grid.RowDefinitions>
+
+              <RepeatButton Grid.Row="0"
+                            Style="{StaticResource ThemedScrollBarLineButton}"
+                            Command="{x:Static ScrollBar.LineUpCommand}"
+                            CommandTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}">
+                <Path Width="7"
+                      Height="4"
+                      Data="M 0 4 L 3.5 0 L 7 4"
+                      Stroke="{DynamicResource TextSecondary}"
+                      StrokeThickness="1.25" />
+              </RepeatButton>
+
+              <Track x:Name="PART_Track"
+                     Grid.Row="1"
+                     IsDirectionReversed="True"
+                     Maximum="{TemplateBinding Maximum}"
+                     Minimum="{TemplateBinding Minimum}"
+                     Value="{TemplateBinding Value}"
+                     ViewportSize="{TemplateBinding ViewportSize}">
+                <Track.DecreaseRepeatButton>
+                  <RepeatButton Background="Transparent"
+                                BorderThickness="0"
+                                Command="{x:Static ScrollBar.PageUpCommand}"
+                                CommandTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
+                                FocusVisualStyle="{x:Null}"
+                                IsTabStop="False" />
+                </Track.DecreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb MinHeight="28"
+                         Background="{DynamicResource TextSecondary}"
+                         FocusVisualStyle="{x:Null}">
+                    <Thumb.Template>
+                      <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="ThumbRoot"
+                                Margin="3,1"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4" />
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ThumbRoot"
+                                    Property="Background"
+                                    Value="{DynamicResource AccentHoverBrush}" />
+                          </Trigger>
+                          <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="ThumbRoot"
+                                    Property="Background"
+                                    Value="{DynamicResource AccentPressedBrush}" />
+                          </Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+                <Track.IncreaseRepeatButton>
+                  <RepeatButton Background="Transparent"
+                                BorderThickness="0"
+                                Command="{x:Static ScrollBar.PageDownCommand}"
+                                CommandTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}"
+                                FocusVisualStyle="{x:Null}"
+                                IsTabStop="False" />
+                </Track.IncreaseRepeatButton>
+              </Track>
+
+              <RepeatButton Grid.Row="2"
+                            Style="{StaticResource ThemedScrollBarLineButton}"
+                            Command="{x:Static ScrollBar.LineDownCommand}"
+                            CommandTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}">
+                <Path Width="7"
+                      Height="4"
+                      Data="M 0 0 L 3.5 4 L 7 0"
+                      Stroke="{DynamicResource TextSecondary}"
+                      StrokeThickness="1.25" />
+              </RepeatButton>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.45" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
 
   <Border BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1">
@@ -492,6 +617,10 @@
              AllowsTransparency="True">
         <Border Width="460" Padding="18" Background="{DynamicResource PanelBackground}" TextElement.Foreground="{DynamicResource TextPrimary}" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="1" CornerRadius="9">
           <ScrollViewer MaxHeight="680" VerticalScrollBarVisibility="Auto">
+            <ScrollViewer.Resources>
+              <Style TargetType="ScrollBar"
+                     BasedOn="{StaticResource ThemedVerticalScrollBar}" />
+            </ScrollViewer.Resources>
             <StackPanel>
               <TextBlock Text="DSH Desk 设置" FontSize="16" FontWeight="SemiBold" Margin="4,0,0,14" />
 
