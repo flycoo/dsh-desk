@@ -40,7 +40,7 @@ internal static class Program
             ("缺少安装时返回专用错误", TestMissingInstallationError),
             ("指定模式处理现有服务的三种选择", TestExistingServiceChoices),
             ("构造安全的 DSH 启动参数", TestProcessStartInfo),
-            ("识别端口占用状态", TestPortOccupancy),
+            ("识别端口不可用原因", TestPortAvailability),
             ("优雅停止超时后强杀进程树", TestStopGracefulThenForce),
             ("ConPTY 向 Node.js 传递 Ctrl+C", TestConPtyCtrlC),
             ("ConPTY 正确转义启动参数", TestConPtyArgumentQuoting),
@@ -639,18 +639,62 @@ internal static class Program
         });
     }
 
-    private static Task TestPortOccupancy()
+    private static Task TestPortAvailability()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        Assert(DshProcessManager.IsPortInUse(port), "占用中的端口应被识别");
+        var occupied = DshProcessManager.ProbePort(port);
+        Assert(!occupied.IsAvailable, "占用中的端口应被识别为不可用");
+        Equal(SocketError.AddressAlreadyInUse, occupied.SocketErrorCode, "应保留端口占用错误码");
         Assert(DshProcessManager.ResolveStartPort(port) == 0, "端口占用时应回退到随机端口");
+        Assert(
+            DshProcessManager.FormatPortFailureForStatus(port, occupied).Contains("已被其他程序监听"),
+            "占用提示应说明存在监听器");
+        Assert(
+            DshProcessManager.FormatPortFailureForLog(port, occupied).Contains("AddressAlreadyInUse"),
+            "占用日志应包含 Winsock 错误名");
 
         listener.Stop();
-        Assert(!DshProcessManager.IsPortInUse(port), "释放后的端口应视为空闲");
+        Assert(DshProcessManager.ProbePort(port).IsAvailable, "释放后的端口应视为可用");
+        Assert(DshProcessManager.IsPortAvailable(port), "公开 API 应报告端口可用");
         Equal(port, DshProcessManager.ResolveStartPort(port), "端口空闲时应使用配置端口");
-        Assert(!DshProcessManager.IsPortInUse(0), "端口 0 应视为可用（系统分配）");
+        Assert(DshProcessManager.ProbePort(0).IsAvailable, "端口 0 应视为可用（系统分配）");
+
+        var accessDenied = new DshProcessManager.PortProbeResult(
+            false,
+            SocketError.AccessDenied,
+            10013,
+            "Access denied");
+        Assert(
+            DshProcessManager.FormatPortFailureForStatus(3080, accessDenied)
+                .Contains("系统排除/保留范围"),
+            "权限拒绝提示应说明 Windows 排除或保留端口");
+        var accessDeniedLog = DshProcessManager.FormatPortFailureForLog(3080, accessDenied);
+        Assert(accessDeniedLog.Contains("AccessDenied/10013"), "权限拒绝日志应包含准确错误码");
+        Assert(accessDeniedLog.Contains("excluded/reserved"), "权限拒绝日志应说明排除或保留范围");
+
+        var unexpected = new DshProcessManager.PortProbeResult(
+            false,
+            SocketError.NetworkDown,
+            10050,
+            "Network is\r\ndown");
+        Assert(
+            DshProcessManager.FormatPortFailureForStatus(3080, unexpected)
+                .Contains("NetworkDown/10050"),
+            "其他错误提示应保留 Winsock 错误码");
+        var unexpectedLog = DshProcessManager.FormatPortFailureForLog(3080, unexpected);
+        Assert(unexpectedLog.Contains("Network is down"), "其他错误日志应保留系统消息");
+        Assert(!unexpectedLog.Contains('\r') && !unexpectedLog.Contains('\n'), "端口错误日志应保持单行");
+
+        WithTemporaryDirectory(directory =>
+        {
+            var log = new LogService(directory);
+            log.Warning("Port fallback test");
+            Assert(
+                File.ReadAllText(log.CurrentLogPath).Contains("[WARN] Port fallback test"),
+                "端口回退应使用 WARN 级别日志");
+        });
         return Task.CompletedTask;
     }
 

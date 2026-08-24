@@ -99,11 +99,20 @@ public sealed class DshProcessManager : IDisposable
                 $"Starting DSH {installation.Version} from {installation.EntryPoint} " +
                 $"(source: {installation.Source}, package: {installation.PackageDirectory})");
 
-            var startPort = ResolveStartPort(_settings.AttachPort);
-            _log.Info(
-                startPort == 0
-                    ? $"Configured port {_settings.AttachPort} is occupied; letting the OS pick a free port"
-                    : $"Starting DSH on port {startPort}");
+            var portProbe = ProbePort(_settings.AttachPort);
+            var startPort = portProbe.IsAvailable ? _settings.AttachPort : 0;
+            if (portProbe.IsAvailable)
+            {
+                _log.Info($"Starting DSH on port {startPort}");
+            }
+            else
+            {
+                SetState(
+                    DshRuntimeState.Starting,
+                    $"正在启动 DSH {installation.Version} · {sourceText}；" +
+                    FormatPortFailureForStatus(_settings.AttachPort, portProbe));
+                _log.Warning(FormatPortFailureForLog(_settings.AttachPort, portProbe));
+            }
 
             var startInfo = CreateStartInfo(
                 nodeExecutable,
@@ -262,26 +271,77 @@ public sealed class DshProcessManager : IDisposable
     /// </summary>
     public static int ResolveStartPort(int configuredPort)
     {
-        return IsPortInUse(configuredPort) ? 0 : configuredPort;
+        return ProbePort(configuredPort).IsAvailable ? configuredPort : 0;
     }
 
+    public static bool IsPortAvailable(int port) => ProbePort(port).IsAvailable;
+
+    [Obsolete("Use IsPortAvailable because a failed bind can also mean a Windows excluded/reserved port or security policy.")]
+    public static bool IsPortInUse(int port) => !IsPortAvailable(port);
+
     /// <summary>
-    /// Whether a loopback listener can bind the given port — mirrors what
+    /// Probe whether a loopback listener can bind the given port — mirrors what
     /// <c>dsh web --host 127.0.0.1 --port &lt;port&gt;</c> needs. A port of 0
-    /// always reports free, since the OS assigns an ephemeral port for it.
+    /// always reports available, since the OS assigns an ephemeral port for it.
+    /// Keep the exact Winsock failure so callers can distinguish a real listener
+    /// from Windows port exclusions, reservations, and security policy failures.
     /// </summary>
-    public static bool IsPortInUse(int port)
+    internal static PortProbeResult ProbePort(int port)
     {
         try
         {
             using var listener = new TcpListener(IPAddress.Loopback, port);
             listener.Start();
-            return false;
+            return PortProbeResult.Available;
         }
-        catch (SocketException)
+        catch (SocketException exception)
         {
-            return true;
+            return new PortProbeResult(
+                false,
+                exception.SocketErrorCode,
+                exception.NativeErrorCode,
+                exception.Message);
         }
+    }
+
+    internal static string FormatPortFailureForStatus(int port, PortProbeResult probe)
+    {
+        var reason = probe.SocketErrorCode switch
+        {
+            SocketError.AddressAlreadyInUse => "已被其他程序监听",
+            SocketError.AccessDenied => "Windows 拒绝绑定（可能位于系统排除/保留范围，或受安全策略限制）",
+            _ => $"绑定失败（Winsock {probe.SocketErrorCode}/{probe.NativeErrorCode}）"
+        };
+        return $"配置端口 {port} 不可用：{reason}；正在让系统选择空闲端口…";
+    }
+
+    internal static string FormatPortFailureForLog(int port, PortProbeResult probe)
+    {
+        var reason = probe.SocketErrorCode switch
+        {
+            SocketError.AddressAlreadyInUse => "another listener is already using the address",
+            SocketError.AccessDenied =>
+                "Windows denied the bind; the port may be excluded/reserved or blocked by a security policy",
+            _ => "the bind failed"
+        };
+        var cleanSystemMessage = probe.ErrorMessage.ReplaceLineEndings(" ").Trim();
+        var systemMessage = string.IsNullOrWhiteSpace(cleanSystemMessage)
+            ? string.Empty
+            : $"; system message: {cleanSystemMessage}";
+        return
+            $"Configured port {port} is unavailable: {reason} " +
+            $"(Winsock {probe.SocketErrorCode}/{probe.NativeErrorCode}){systemMessage}; " +
+            "letting the OS pick a free port";
+    }
+
+    internal readonly record struct PortProbeResult(
+        bool IsAvailable,
+        SocketError SocketErrorCode,
+        int NativeErrorCode,
+        string ErrorMessage)
+    {
+        public static PortProbeResult Available { get; } =
+            new(true, SocketError.Success, 0, string.Empty);
     }
 
     public static DshInstallation ResolveInstallation(
