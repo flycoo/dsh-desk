@@ -4,6 +4,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using DshDesk.Models;
@@ -15,6 +16,12 @@ namespace DshDesk;
 
 public partial class MainWindow : Window
 {
+    private static readonly IntPtr HwndTop = IntPtr.Zero;
+    private static readonly IntPtr HwndNotTopmost = new(-2);
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoActivate = 0x0010;
+
     private const string InstallCommand = "npm install --global @deepseek-ai/dsh";
     private const string DshUpdateCommand = "npm install --global @deepseek-ai/dsh@latest";
 
@@ -563,6 +570,17 @@ public partial class MainWindow : Window
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DestroyIcon(IntPtr iconHandle);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        IntPtr windowHandle,
+        IntPtr insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
+
     private void MainWindow_OnClosing(object? sender, CancelEventArgs e)
     {
         if (_isExiting)
@@ -855,64 +873,117 @@ public partial class MainWindow : Window
 
     private void SelectDshPackageButton_OnClick(object sender, RoutedEventArgs e)
     {
-        SettingsPopup.IsOpen = false;
-        using var dialog = new Forms.FolderBrowserDialog
+        var popupHandle = PrepareSettingsForOwnedDialog();
+        try
         {
-            Description = "请选择包含 package.json 的 @deepseek-ai/dsh 包目录",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = false,
-            SelectedPath = Directory.Exists(_draftDshPackageDirectory)
-                ? _draftDshPackageDirectory
-                : Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
-        };
-        if (dialog.ShowDialog() != Forms.DialogResult.OK)
-        {
-            SettingsPopup.IsOpen = true;
-            return;
-        }
+            using var dialog = new Forms.FolderBrowserDialog
+            {
+                Description = "请选择包含 package.json 的 @deepseek-ai/dsh 包目录",
+                UseDescriptionForTitle = true,
+                ShowNewFolderButton = false,
+                SelectedPath = Directory.Exists(_draftDshPackageDirectory)
+                    ? _draftDshPackageDirectory
+                    : Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData)
+            };
+            if (dialog.ShowDialog(CreateDialogOwner()) != Forms.DialogResult.OK)
+            {
+                return;
+            }
 
-        if (!DshPackageLocator.TryValidatePackageDirectory(
-                dialog.SelectedPath,
-                DshInstallationSource.Specified,
-                out var installation,
-                out var error))
-        {
-            System.Windows.MessageBox.Show(
-                error,
-                "无效的 DSH 安装目录",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-            SettingsPopup.IsOpen = true;
-            return;
-        }
+            if (!DshPackageLocator.TryValidatePackageDirectory(
+                    dialog.SelectedPath,
+                    DshInstallationSource.Specified,
+                    out var installation,
+                    out var error))
+            {
+                System.Windows.MessageBox.Show(
+                    error,
+                    "无效的 DSH 安装目录",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
 
-        _draftDshPackageDirectory = installation!.PackageDirectory;
-        SpecifiedInstallationPathText.Text =
-            $"版本：{installation.Version}{Environment.NewLine}{installation.PackageDirectory}";
-        SettingsPopup.IsOpen = true;
+            _draftDshPackageDirectory = installation!.PackageDirectory;
+            SpecifiedInstallationPathText.Text =
+                $"版本：{installation.Version}{Environment.NewLine}{installation.PackageDirectory}";
+        }
+        finally
+        {
+            RestoreSettingsAfterOwnedDialog(popupHandle);
+        }
     }
 
     private void SelectWorkspaceButton_OnClick(object sender, RoutedEventArgs e)
     {
-        SettingsPopup.IsOpen = false;
-        using var dialog = new Forms.FolderBrowserDialog
+        var popupHandle = PrepareSettingsForOwnedDialog();
+        try
         {
-            Description = "请选择 DSH Web 使用的默认 Workspace",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = false,
-            SelectedPath = Directory.Exists(_draftWorkspaceDirectory)
-                ? _draftWorkspaceDirectory
-                : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-        };
-        if (dialog.ShowDialog() != Forms.DialogResult.OK)
+            using var dialog = new Forms.FolderBrowserDialog
+            {
+                Description = "请选择 DSH Web 使用的默认 Workspace",
+                UseDescriptionForTitle = true,
+                ShowNewFolderButton = false,
+                SelectedPath = Directory.Exists(_draftWorkspaceDirectory)
+                    ? _draftWorkspaceDirectory
+                    : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            };
+            if (dialog.ShowDialog(CreateDialogOwner()) != Forms.DialogResult.OK)
+            {
+                return;
+            }
+
+            _draftWorkspaceDirectory = Path.GetFullPath(dialog.SelectedPath);
+            WorkspacePathText.Text = _draftWorkspaceDirectory;
+        }
+        finally
         {
-            SettingsPopup.IsOpen = true;
-            return;
+            RestoreSettingsAfterOwnedDialog(popupHandle);
+        }
+    }
+
+    private IntPtr PrepareSettingsForOwnedDialog()
+    {
+        SettingsPopup.StaysOpen = true;
+        var popupHandle = (PresentationSource.FromVisual(SettingsDrawer) as HwndSource)?.Handle
+                          ?? IntPtr.Zero;
+        if (popupHandle != IntPtr.Zero)
+        {
+            SetWindowPos(
+                popupHandle,
+                HwndNotTopmost,
+                0,
+                0,
+                0,
+                0,
+                SwpNoMove | SwpNoSize | SwpNoActivate);
         }
 
-        _draftWorkspaceDirectory = Path.GetFullPath(dialog.SelectedPath);
-        WorkspacePathText.Text = _draftWorkspaceDirectory;
-        SettingsPopup.IsOpen = true;
+        return popupHandle;
+    }
+
+    private Forms.IWin32Window CreateDialogOwner() =>
+        new DialogWindowOwner(new WindowInteropHelper(this).EnsureHandle());
+
+    private void RestoreSettingsAfterOwnedDialog(IntPtr popupHandle)
+    {
+        SettingsPopup.StaysOpen = false;
+        if (SettingsPopup.IsOpen && popupHandle != IntPtr.Zero)
+        {
+            SetWindowPos(
+                popupHandle,
+                HwndTop,
+                0,
+                0,
+                0,
+                0,
+                SwpNoMove | SwpNoSize | SwpNoActivate);
+        }
+    }
+
+    private sealed class DialogWindowOwner(IntPtr handle) : Forms.IWin32Window
+    {
+        public IntPtr Handle { get; } = handle;
     }
 
     private async void SaveAndReconnectButton_OnClick(object sender, RoutedEventArgs e)
