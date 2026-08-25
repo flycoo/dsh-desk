@@ -144,6 +144,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         _windowWorkAreaMaximizer = new WindowWorkAreaMaximizer(this);
         SourceInitialized += (_, _) => WindowPlacementService.Restore(this, settings.WindowPlacement);
+        SizeChanged += (_, _) => UpdateSettingsDrawerSize();
+        PreviewKeyDown += MainWindow_OnPreviewKeyDown;
         CloseToTrayCheckBox.IsChecked = settings.CloseToTray;
         LaunchAtLoginCheckBox.IsChecked = StartupRegistrationService.IsEnabledForCurrentExecutable();
         _settingsInitialized = true;
@@ -447,6 +449,7 @@ public partial class MainWindow : Window
                 : e.State == DshRuntimeState.Attached
                     ? "来源：外部服务"
                     : string.Empty;
+            UpdateRuntimeEnvironmentSummary();
             _trayIcon.Text = StatusText.Text.Length <= 63 ? $"DSH Desk - {StatusText.Text}" : "DSH Desk";
             UpdateAddressActions();
 
@@ -682,10 +685,27 @@ public partial class MainWindow : Window
         DragMove();
     }
 
-    private void StatusButton_OnClick(object sender, RoutedEventArgs e) => StatusPopup.IsOpen = !StatusPopup.IsOpen;
+    private void StatusButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        SettingsPopup.IsOpen = false;
+        var open = !StatusPopup.IsOpen;
+        if (open)
+        {
+            StatusPopup.HorizontalOffset = (StatusButton.ActualWidth - StatusPopupCard.Width) / 2;
+        }
+
+        StatusPopup.IsOpen = open;
+    }
+
+    private void StatusPopup_OnOpened(object sender, EventArgs e) =>
+        StatusButton.Background = (System.Windows.Media.Brush)FindResource("SurfaceBackground");
+
+    private void StatusPopup_OnClosed(object sender, EventArgs e) =>
+        StatusButton.Background = System.Windows.Media.Brushes.Transparent;
 
     private async void SettingsButton_OnClick(object sender, RoutedEventArgs e)
     {
+        StatusPopup.IsOpen = false;
         if (SettingsPopup.IsOpen)
         {
             SettingsPopup.IsOpen = false;
@@ -695,9 +715,98 @@ public partial class MainWindow : Window
         _updatingStartupRegistration = true;
         LaunchAtLoginCheckBox.IsChecked = StartupRegistrationService.IsEnabledForCurrentExecutable();
         _updatingStartupRegistration = false;
+        SetEnvironmentConfigurationExpanded(false);
         LoadSettingsDraft();
         SettingsPopup.IsOpen = true;
         await RefreshDetectedInstallationAsync();
+    }
+
+    private void SettingsPopup_OnOpened(object sender, EventArgs e)
+    {
+        UpdateSettingsDrawerSize();
+        SettingsButton.Background = (System.Windows.Media.Brush)FindResource("SurfaceBackground");
+    }
+
+    private void SettingsPopup_OnClosed(object sender, EventArgs e) =>
+        SettingsButton.Background = System.Windows.Media.Brushes.Transparent;
+
+    private void CloseSettingsButton_OnClick(object sender, RoutedEventArgs e) =>
+        SettingsPopup.IsOpen = false;
+
+    private void ChangeRuntimeEnvironmentButton_OnClick(object sender, RoutedEventArgs e) =>
+        SetEnvironmentConfigurationExpanded(
+            EnvironmentConfigurationPanel.Visibility != Visibility.Visible);
+
+    private void SetEnvironmentConfigurationExpanded(bool expanded)
+    {
+        EnvironmentConfigurationPanel.Visibility = expanded
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ChangeRuntimeEnvironmentButton.Content = expanded
+            ? "收起运行环境设置"
+            : "更改运行环境";
+    }
+
+    private void UpdateRuntimeEnvironmentSummary()
+    {
+        var state = _processManager.State;
+        var installation = _processManager.CurrentInstallation;
+        EnvironmentStatusDot.Fill = StatusDot.Fill;
+        EnvironmentConnectionText.Text = state switch
+        {
+            DshRuntimeState.Ready or DshRuntimeState.Attached => "已连接",
+            DshRuntimeState.Checking => "正在检查",
+            DshRuntimeState.Starting => "正在启动",
+            DshRuntimeState.Faulted => "连接失败",
+            _ => "已停止"
+        };
+
+        if (installation is not null)
+        {
+            EnvironmentVersionText.Text = $"DSH {installation.Version}";
+            EnvironmentSourceText.Text = installation.Source == DshInstallationSource.System
+                ? "系统安装"
+                : "指定路径";
+            EnvironmentPathText.Text = installation.PackageDirectory;
+            return;
+        }
+
+        EnvironmentVersionText.Text = _processManager.CurrentVersion is { Length: > 0 } version
+            ? $"DSH {version}"
+            : state == DshRuntimeState.Attached
+                ? "外部 DSH"
+                : "DSH";
+        EnvironmentSourceText.Text = state == DshRuntimeState.Attached
+            ? "外部服务"
+            : _settings.InstallationMode == DshInstallationMode.SpecifiedPath
+                ? "指定路径"
+                : "自动检测";
+        EnvironmentPathText.Text = _processManager.CurrentUrl?.Authority ?? "尚未连接";
+    }
+
+    private void UpdateSettingsDrawerSize()
+    {
+        if (!IsLoaded)
+        {
+            return;
+        }
+
+        SettingsDrawer.Height = Math.Max(320, ActualHeight - TitleBar.ActualHeight - 8);
+    }
+
+    private void MainWindow_OnPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape)
+        {
+            return;
+        }
+
+        if (SettingsPopup.IsOpen || StatusPopup.IsOpen)
+        {
+            SettingsPopup.IsOpen = false;
+            StatusPopup.IsOpen = false;
+            e.Handled = true;
+        }
     }
 
     private void MinimizeButton_OnClick(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
@@ -892,6 +1001,7 @@ public partial class MainWindow : Window
     private async void ChooseInstallationButton_OnClick(object sender, RoutedEventArgs e)
     {
         LoadSettingsDraft(forceSpecifiedPath: true);
+        SetEnvironmentConfigurationExpanded(true);
         SettingsPopup.IsOpen = true;
         await RefreshDetectedInstallationAsync();
     }
@@ -929,6 +1039,7 @@ public partial class MainWindow : Window
             ? "尚未选择 @deepseek-ai/dsh 包目录"
             : _draftDshPackageDirectory;
         WorkspacePathText.Text = _draftWorkspaceDirectory;
+        UpdateRuntimeEnvironmentSummary();
     }
 
     private async Task RefreshDetectedInstallationAsync()

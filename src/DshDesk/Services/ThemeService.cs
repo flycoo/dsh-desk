@@ -21,6 +21,7 @@ public static class ThemeService
         Set(resources, "TextPrimary", isLight ? "#17201D" : "#EEF4F1");
         Set(resources, "TextSecondary", isLight ? "#66756E" : "#9BACA3");
         Set(resources, "AccentBrush", "#087F56");
+        Set(resources, "AccentSurfaceBrush", isLight ? "#E9F5F0" : "#19362D");
         Set(resources, "AccentHoverBrush", "#0A9565");
         Set(resources, "AccentPressedBrush", "#066744");
         Set(resources, "DangerBrush", "#C42B1C");
